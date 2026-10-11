@@ -1,0 +1,10 @@
+[
+  {
+    "clip": "L_breakdance_40s",
+    "ref": "masks_tiny_mps_bf16",
+    "other": "masks_tiny_mps_bf16_offload",
+    "iou_mean": 1.0,
+    "iou_min": 1.0,
+    "frames_below_0.95": 0
+  }
+]

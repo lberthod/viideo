@@ -1,0 +1,146 @@
+{
+  "note": "Mesures indicatives : un build Rust/Tauri pouvait tourner en parallèle.",
+  "clips": [
+    {
+      "file": "mixkit-28311.mp4",
+      "duration": 13.76375,
+      "size_mb": 43.61,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 13.76375,
+          "width": 2160,
+          "height": 3840,
+          "fps": "60000/1001",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "2160x3840"
+        }
+      ],
+      "id": "V1_vertical_4k60",
+      "has_audio": false,
+      "proxy_720p_decode": {
+        "software": {
+          "seconds_for_10s": 0.96,
+          "ok": true
+        },
+        "videotoolbox": {
+          "seconds_for_10s": 3.09,
+          "ok": true
+        }
+      },
+      "export_native_5s": {
+        "libx264_crf18_medium": {
+          "seconds_for_5s": 15.6,
+          "ok": true,
+          "size_mb": 9.66
+        },
+        "h264_videotoolbox_q65": {
+          "seconds_for_5s": 4.7,
+          "ok": true,
+          "size_mb": 9.32
+        },
+        "hevc_videotoolbox_q65": {
+          "seconds_for_5s": 4.89,
+          "ok": true,
+          "size_mb": 6.27
+        }
+      }
+    },
+    {
+      "file": "mixkit-42323.mp4",
+      "duration": 16.850167,
+      "size_mb": 59.44,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 16.850167,
+          "width": 1080,
+          "height": 1920,
+          "fps": "24000/1001",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1080x1920"
+        }
+      ],
+      "id": "V2_vertical_selfie",
+      "has_audio": false,
+      "proxy_720p_decode": {
+        "software": {
+          "seconds_for_10s": 0.35,
+          "ok": true
+        },
+        "videotoolbox": {
+          "seconds_for_10s": 1.13,
+          "ok": true
+        }
+      },
+      "export_native_5s": {
+        "libx264_crf18_medium": {
+          "seconds_for_5s": 2.15,
+          "ok": true,
+          "size_mb": 9.63
+        },
+        "h264_videotoolbox_q65": {
+          "seconds_for_5s": 0.81,
+          "ok": true,
+          "size_mb": 5.56
+        },
+        "hevc_videotoolbox_q65": {
+          "seconds_for_5s": 0.8,
+          "ok": true,
+          "size_mb": 4.38
+        }
+      }
+    },
+    {
+      "file": "mixkit-452.mp4",
+      "duration": 39.998292,
+      "size_mb": 175.92,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 39.998292,
+          "width": 3840,
+          "height": 2160,
+          "fps": "24000/1001",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "3840x2160"
+        }
+      ],
+      "id": "L_breakdance_40s",
+      "has_audio": false,
+      "proxy_720p_decode": {
+        "software": {
+          "seconds_for_10s": 0.82,
+          "ok": true
+        },
+        "videotoolbox": {
+          "seconds_for_10s": 1.94,
+          "ok": true
+        }
+      },
+      "export_native_5s": {
+        "libx264_crf18_medium": {
+          "seconds_for_5s": 6.93,
+          "ok": true,
+          "size_mb": 13.33
+        },
+        "h264_videotoolbox_q65": {
+          "seconds_for_5s": 2.1,
+          "ok": true,
+          "size_mb": 4.19
+        },
+        "hevc_videotoolbox_q65": {
+          "seconds_for_5s": 2.07,
+          "ok": true,
+          "size_mb": 2.69
+        }
+      }
+    }
+  ]
+}

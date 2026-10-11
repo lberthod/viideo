@@ -1,0 +1,32 @@
+[
+  {
+    "clip": "V1_vertical_4k60",
+    "model": "tiny",
+    "composite_s": 1.25,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/V1_vertical_4k60__tiny_bf16.mp4",
+    "diag": "stage0/results/composites/V1_vertical_4k60__tiny_bf16__diag.mp4",
+    "errors": ""
+  },
+  {
+    "clip": "V2_vertical_selfie",
+    "model": "tiny",
+    "composite_s": 1.7,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/V2_vertical_selfie__tiny_bf16.mp4",
+    "diag": "stage0/results/composites/V2_vertical_selfie__tiny_bf16__diag.mp4",
+    "errors": ""
+  },
+  {
+    "clip": "L_breakdance_40s",
+    "model": "tiny",
+    "composite_s": 6.56,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/L_breakdance_40s__tiny_bf16.mp4",
+    "diag": "stage0/results/composites/L_breakdance_40s__tiny_bf16__diag.mp4",
+    "errors": ""
+  }
+]

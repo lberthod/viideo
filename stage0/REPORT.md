@@ -161,3 +161,105 @@ Le graphe FFmpeg enchaîne : masque PNG, `boxblur` 1,5 px (adoucissement), `alph
 ## 8. Reproduire
 
 Voir le [README](../README.md). Les poids, les clips, les venvs et le cache sont exclus de Git (`.gitignore`). Leur reconstruction est décrite dans le README et dans `clips.json`.
+
+## 9. Compléments : clips verticaux et clip long
+
+Ce complément comble les deux manques listés en §7 : des images « type téléphone » (vertical 9:16, 4K, haute cadence) et un clip long pour mesurer la mémoire, la vitesse et la dérive de SAM 2 dans le temps. Toutes les mesures sont en **SAM 2.1 tiny, bf16, MPS**.
+
+> **Mesures bruitées.** Un build Rust/Tauri et un autre processus Python de vision tournaient en parallèle (load average entre 10 et 30). Les vitesses sont donc indicatives, à ±30 % près. La mémoire et la qualité des masques ne sont pas affectées.
+
+### Clips ajoutés
+
+Tous les clips sont sous [Mixkit Stock Video Free License](https://mixkit.co/license/#videoFree), vérifiée sur la page de chaque clip. Ils sont téléchargés dans `clips/source/` (280 Mo). La configuration est dans [clips_phase2.json](clips_phase2.json), avec les prompts en coordonnées proxy et une durée par clip (`seconds`).
+
+| Id | Source | Format natif | Durée testée | Proxy | Contenu |
+|---|---|---|---|---|---|
+| V1_vertical_4k60 | [Mixkit 28311](https://mixkit.co/free-stock-video/girl-sending-a-selfie-by-cell-phone-on-a-green-28311/) | H.264 2160×3840, 59,94 i/s | 13,8 s (825 images) | 406×720 | Femme qui manipule son téléphone, fond vert |
+| V2_vertical_selfie | [Mixkit 42323](https://mixkit.co/free-stock-video/portrait-of-an-influencer-talking-to-the-camera-42323/) | H.264 1080×1920, 23,976 i/s | 16,9 s (404 images) | 406×720 | Influenceuse face caméra, cheveux bouclés, gestes, fond chargé |
+| L_breakdance_40s | [Mixkit 452](https://mixkit.co/free-stock-video/man-breakdancing-452/) | H.264 3840×2160, 23,976 i/s | 40,0 s (959 images) | 1280×720 | Breakdance en plan continu : poiriers, rotations, cheveux |
+
+Choix et limites :
+- **Clip long :** les clips Mixkit de plus de 30 s montrant une personne sont presque tous sous *Restricted License*. Le seul plan continu de 30 s ou plus sous licence libre trouvé est le n° 452 (40 s, aucune coupe détectée par `select=scene>0.3`). Ce mouvement est un cas de stress, plus dur qu'un vlog face caméra.
+- **Pas de vrai fichier iPhone :** les trois sources sont en H.264 SDR, sans audio ni rotation, et à cadence constante. Le HEVC, le HDR, le VFR et l'audio réel restent **à tester sur de vrais fichiers de téléphone**. Pexels refuse l'accès scripté (HTTP 403).
+
+### Média : probe, proxy et export 4K
+
+Script : [scripts/media_phase2.py](scripts/media_phase2.py). Résultats : [results/media_phase2.json](results/media_phase2.json).
+
+| Clip | Proxy 720p, 10 s : logiciel / `-hwaccel videotoolbox` | Export 5 s natif : libx264 CRF 18 medium | h264_videotoolbox | hevc_videotoolbox |
+|---|---|---|---|---|
+| V1 (4K60 vertical) | 0,96 s / 3,09 s | 15,6 s (9,7 Mo) | 4,7 s (9,3 Mo) | 4,9 s (6,3 Mo) |
+| V2 (1080p vertical) | 0,35 s / 1,13 s | 2,2 s | 0,8 s | 0,8 s |
+| L (4K24) | 0,82 s / 1,94 s | 6,9 s (13,3 Mo) | 2,1 s (4,2 Mo) | 2,1 s (2,7 Mo) |
+
+- **En 4K, VideoToolbox est 3 à 3,5 fois plus rapide que libx264**, avec un débit d'environ 1× le temps réel en 4K60. HEVC VideoToolbox produit des fichiers 35 % plus légers, à vitesse égale. Pour l'export en résolution native depuis une source 4K, il faut **VideoToolbox par défaut** (cf. §3). La qualité visuelle à q 65 reste à vérifier.
+- Pour extraire le proxy, le **décodage logiciel est plus rapide** que `-hwaccel videotoolbox`, à cause du rapatriement des images avant `scale`. Il faut garder le décodage logiciel pour les proxys.
+- Les dimensions des vidéos verticales sont stockées telles quelles (2160×3840, rotation 0). Le probe gère les deux cas, mais il faut quand même tester une vraie vidéo iPhone avec matrice de rotation.
+
+### SAM 2 sur les clips verticaux
+
+| Clip | Images | Vitesse (i/s) | Pic MPS | Pic RSS | IoU consécutif moy. / min | Images < 0,9 |
+|---|---|---|---|---|---|---|
+| V1_vertical_4k60 | 825 | 7,6 (run 1, charge modérée) ; 3,7 (run 2, load ~30) | 21,0 Go | 11,0 Go | 0,996 / 0,962 | 0 |
+| V2_vertical_selfie | 404 | 4,6 (processus dédié) ; 3,2 (run 1, après V1) | 10,4 Go | 5,7 Go | 0,984 / 0,891 | 1 |
+
+- Fichiers : `results/sam2/V*_bf16.json` (processus dédié) et `*__run1_same_process.json` (premier passage, trois clips dans un même processus).
+- **Format vertical :** aucun problème. Le proxy 406×720 passe tel quel dans SAM 2, qui redimensionne en 1024², et les prompts se donnent en coordonnées proxy.
+- **V1 :** le masque est très propre sur fond vert, sans dérive sur 825 images. Le téléphone tenu en main est en général exclu du masque. Il faudra un clic positif si on veut l'inclure.
+- **V2 :** les cheveux bouclés sont suivis comme une masse, et le fond (boîtes de céréales) reste visible entre les boucles, comme pour D_long_hair. La main qui passe devant le corps est bien incluse. On observe jusqu'à 21 petites composantes sur une image : des îlots dans les cheveux.
+- **4K60 → 60 i/s :** traiter toutes les images d'un clip à 60 i/s double le coût par seconde de vidéo. Pour l'aperçu, on pourrait segmenter à 30 i/s puis interpoler ou dupliquer les masques. C'est à décider à l'étape 1.
+
+### SAM 2 sur le clip long (40 s, 959 images, 1280×720)
+
+Le clip a été lancé dans des processus séparés pour isoler la mémoire. Résumé : [results/long_clip_summary.json](results/long_clip_summary.json).
+
+| Variante | `init_state` | Vitesse (i/s) | Vitesse par fenêtre de 100 images | Pic MPS (driver) | MPS en régime (début → fin) | Pic RSS |
+|---|---|---|---|---|---|---|
+| GPU (sans offload) | 9,6 s | 5,28 | 4,7–6,0 | **24,3 Go** | 13,4 → 14,1 Go | 12,7 Go |
+| `offload_video_to_cpu` | 13,2 s | 4,36 (load ~28) | 3,0–5,3 | **3,1 Go** | 1,4 → 3,1 Go | 13,7 Go |
+| `offload_video` + `offload_state` | 11,9 s | 5,39 | 4,4–6,2 | **2,4 Go** | 1,3 → 2,4 Go | 14,2 Go |
+| GPU, même processus après V1 et V2 | 9,8 s | 5,06 | 3,7–5,7 | 36,6 Go | 24,5 Go | 13,1 Go |
+
+**Masques :** ils sont identiques avec et sans offload (IoU 1,0 sur les 959 images, `results/compare__masks_tiny_mps_bf16__vs__*offload*.json`). Aucune image n'est vide. L'IoU consécutif vaut 0,848 en moyenne et 0,599 au minimum, avec 676 images sous 0,9.
+
+**Dérive : aucune dérive visible.** Les images 0, 120, 240 … 958 ont été vérifiées en superposition. Le danseur est suivi entier, y compris en poirier, en rotation, cheveux compris, et jusqu'à la dernière image, sans fuite sur le mur ni sur les ombres. L'IoU consécutif bas ne vient pas d'une dérive : il varie avec l'intensité du mouvement (0,75 à 0,95 selon les fenêtres) et ne décroît pas avec le temps. Les pires images (163, 235) sont des jambes et des bras qui se déplacent fortement entre deux images à 24 i/s, avec un masque correct. Extraits : `results/report_assets/L_breakdance_diag_{2,20,38}s.jpg`.
+
+**Vitesse dans le temps :** il n'y a pas de ralentissement systématique en bf16 sur 959 images, et les variations suivent la charge de la machine. Sur V1 (run 1), on voit une baisse de 8,4 à 6,1 i/s sur 825 images, mais elle ne se reproduit pas proprement sous charge. À surveiller.
+
+**Mémoire, ce qui compte vraiment :**
+1. **Le coût mémoire dépend du nombre d'images, pas de la résolution du proxy.** SAM 2 stocke chaque image en 1024×1024 fp32, soit environ 12,6 Mo par image. Pour 959 images, cela fait 13,4 Go sur le GPU en régime et 24 Go en pic pendant le chargement. V1 (825 images verticales 406×720) atteint aussi 21 Go.
+2. **`offload_video_to_cpu` règle le problème côté GPU** (3 Go au lieu de 24 Go), sans perte de qualité ni coût de vitesse mesurable dans le bruit. `offload_state_to_cpu` gagne encore 0,7 Go.
+3. **L'offload ne règle rien côté RSS.** Le chargeur de SAM 2 décode d'abord toutes les images en fp32 sur CPU (~12,7 Go pour 40 s à 24 i/s). En mémoire unifiée, c'est la même RAM. Il faut extrapoler à **60 s à 60 i/s (3 600 images) : ~45 Go**, ce qui est intenable sur 64 Go avec le reste.
+4. La mémoire de suivi croît peu : +0,7 Go sur 959 images.
+5. Le cache MPS n'est pas rendu entre deux clips dans un même processus (36,6 Go de pic au 3ᵉ clip). Le worker persistant devra appeler `torch.mps.empty_cache()` après chaque `propagate` ou `reset_state`.
+
+Incident : le premier essai `--offload --offload-state`, enchaîné dans une boucle shell, n'a pas écrit de JSON. Sa sortie avait été filtrée et la cause n'a pas été identifiée. Relancé seul, il a fonctionné. Aucun OOM n'a été observé.
+
+### Compositing
+
+Sorties : `results/composites/{V1,V2,L}_*__tiny_bf16*.mp4` et `results/composite_tiny_bf16_clips_phase2.json`.
+
+Les temps sont de 1,3 s (V1, 825 images), 1,7 s (V2) et 6,6 s (L, 40 s). La sortie suit maintenant la taille du proxy : 406×720 en vertical. Le décor 16:9 est recadré au centre.
+
+**Bug corrigé dans `composite_test.py` :** l'image de décor bouclée entrait à 25 i/s par défaut, et `overlay` imposait cette cadence. Les sorties étaient donc rééchantillonnées à 25 i/s, avec 344 images au lieu de 825 pour V1. Le décor reçoit maintenant `-framerate` = cadence de la source. **Les composites A–E du §6 ont été produits avant la correction** : ils sont à 25 i/s, avec des images dupliquées ou sautées pour C, D et E. Il faut les régénérer si on les réutilise.
+
+### Modifications des scripts
+
+Elles sont toutes rétrocompatibles : sans option, le comportement est celui de §4–6, sauf la correction de cadence.
+- `sam2_bench.py` : options `--config` (défaut `stage0/clips.json`), `--offload` (`offload_video_to_cpu`) et `--offload-state` (`offload_state_to_cpu`). Le champ `seconds` par clip est optionnel, avec `bench_seconds` global par défaut. Le JSON contient maintenant `windows` : vitesse, IoU, aire et mémoire par fenêtre de 100 images. Suffixes de fichiers : `__offload`, `__offstate`.
+- `composite_test.py` : options `--config` et `--variant` (dossier de masques `masks_<modèle>_<device>_<variant>`). La sortie prend la taille du proxy, et la cadence du décor est corrigée.
+- Nouveau script `media_phase2.py` : probe et mesures de décodage et d'encodage 4K.
+
+### Recommandation mise à jour pour les clips longs
+
+| Durée × cadence | Stratégie |
+|---|---|
+| ≤ ~400 images (≤ 15 s à 24–30 i/s) | Tout en mémoire, sur GPU ou avec `offload_video_to_cpu`, ~5 Go de RAM |
+| 400 à ~1 000 images (≤ 40 s à 24 i/s) | **`offload_video_to_cpu=True` + `offload_state_to_cpu=True` par défaut** : GPU ≤ 3 Go, RSS ~13 Go. Mesuré, sans perte. |
+| > ~1 000 images (60 s à 30 i/s, toute vidéo 60 i/s longue) | **Segmentation par blocs** de 300 à 500 images : `init_state` par bloc, ré-amorçage du bloc suivant avec `add_new_mask` sur le dernier masque (ou les 2–3 derniers), chevauchement de quelques images pour contrôler la continuité. RAM bornée à ~4–6 Go quel que soit la durée. |
+
+À faire aussi pour le worker de l'étape 1 :
+- Remplacer le chargeur d'images de SAM 2 par un chargeur paresseux (uint8 sur CPU, normalisation à la volée), qui supprimerait le pic RSS fp32.
+- Proposer une segmentation à cadence réduite (30 i/s) pour les sources à 60 i/s.
+- Appeler `empty_cache` entre les clips.
+- Afficher la progression par fenêtres, car le temps total d'un clip de 40 s est d'environ 3 min.

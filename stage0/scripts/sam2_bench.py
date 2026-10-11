@@ -1,9 +1,13 @@
 """Étape 0 — benchmark de segmentation vidéo SAM 2.1 sur les clips de référence.
 
 Usage : .venvs/vision/bin/python stage0/scripts/sam2_bench.py --model tiny --device mps [--clips A_presenter ...]
+        [--config stage0/clips_phase2.json] [--bf16] [--offload] [--offload-state]
 
 Pour chaque clip : extrait un proxy JPEG (cache), initialise SAM 2 avec la boîte + points
 de clips.json sur l'image 0, propage le masque, écrit les masques PNG et un JSON de mesures.
+Un clip peut fixer sa propre durée ("seconds"), sinon "bench_seconds" global s'applique.
+Les mesures sont aussi découpées par fenêtres de 100 images (vitesse, mémoire, stabilité du masque)
+pour rendre visibles un ralentissement ou une dérive sur les clips longs.
 """
 import argparse
 import json
@@ -64,7 +68,7 @@ def extract_frames(clip, cfg):
     src = ROOT / "clips" / "source" / clip["file"]
     subprocess.run(
         ["ffmpeg", "-v", "error", "-y", "-ss", str(clip["start"]), "-i", str(src),
-         "-t", str(cfg["bench_seconds"]), "-vf", f"scale=-2:{cfg['proxy_height']}",
+         "-t", str(clip.get("seconds", cfg["bench_seconds"])), "-vf", f"scale=-2:{cfg['proxy_height']}",
          "-q:v", "2", "-start_number", "0", str(out / "%05d.jpg")],
         check=True,
     )
@@ -99,7 +103,32 @@ def mask_metrics(masks):
     }
 
 
-def run_clip(predictor, clip, cfg, model_name, device, tag=""):
+WINDOW = 100
+
+
+def window_stats(masks, times, mem_marks):
+    """Vitesse et stabilité du masque par fenêtre de WINDOW images."""
+    out = []
+    total = masks[0].size
+    for s in range(0, len(masks), WINDOW):
+        e = min(s + WINDOW, len(masks))
+        dt = times[e - 1] - (times[s - 1] if s else 0.0)
+        ious = []
+        for i in range(max(s, 1), e):
+            u = np.logical_or(masks[i], masks[i - 1]).sum()
+            ious.append(np.logical_and(masks[i], masks[i - 1]).sum() / u if u else 1.0)
+        areas = [m.sum() / total * 100 for m in masks[s:e]]
+        rss, mps = mem_marks[e - 1]
+        out.append({"frames": f"{s}-{e - 1}", "fps": round((e - s) / dt, 2) if dt > 0 else None,
+                    "consecutive_iou_mean": round(float(np.mean(ious)), 4) if ious else None,
+                    "consecutive_iou_min": round(float(np.min(ious)), 4) if ious else None,
+                    "area_pct_mean": round(float(np.mean(areas)), 2),
+                    "empty_frames": int(sum(a == 0 for a in areas)),
+                    "rss_gb_end": round(rss / 1e9, 2), "mps_driver_gb_end": round(mps / 1e9, 2)})
+    return out
+
+
+def run_clip(predictor, clip, cfg, model_name, device, tag="", offload_video=False, offload_state=False):
     frames_dir = extract_frames(clip, cfg)
     n_frames = len(list(frames_dir.glob("*.jpg")))
     mask_dir = CACHE / clip["id"] / f"masks_{model_name}_{device}{tag}"
@@ -108,7 +137,8 @@ def run_clip(predictor, clip, cfg, model_name, device, tag=""):
     masks = []
     with PeakMemory() as mem:
         t0 = time.perf_counter()
-        state = predictor.init_state(video_path=str(frames_dir))
+        state = predictor.init_state(video_path=str(frames_dir), offload_video_to_cpu=offload_video,
+                                     offload_state_to_cpu=offload_state)
         t_init = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -120,18 +150,27 @@ def run_clip(predictor, clip, cfg, model_name, device, tag=""):
         )
         t_prompt = time.perf_counter() - t0
 
+        times, mem_marks = [], []
+        proc = psutil.Process()
         t0 = time.perf_counter()
         for idx, _, logits in predictor.propagate_in_video(state):
             m = (logits[0, 0] > 0).cpu().numpy()
             masks.append(m)
             cv2.imwrite(str(mask_dir / f"{idx:05d}.png"), (m * 255).astype(np.uint8))
+            times.append(time.perf_counter() - t0)
+            if (len(masks) % WINDOW == 0) or len(masks) == n_frames:
+                mps_now = torch.mps.driver_allocated_memory() if device == "mps" else 0
+                mem_marks.append((proc.memory_info().rss, mps_now))
+            else:
+                mem_marks.append(mem_marks[-1] if mem_marks else (0, 0))
         t_prop = time.perf_counter() - t0
         predictor.reset_state(state)
 
     h, w = masks[0].shape
     res = {
         "clip": clip["id"], "case": clip["case"], "model": f"sam2.1_hiera_{model_name}",
-        "device": device, "variant": tag.lstrip("_") or "fp32", "resolution": f"{w}x{h}", "frames": n_frames,
+        "device": device, "variant": tag.lstrip("_") or "fp32",
+        "offload_video_to_cpu": offload_video, "offload_state_to_cpu": offload_state, "resolution": f"{w}x{h}", "frames": n_frames,
         "time_init_s": round(t_init, 2), "time_prompt_s": round(t_prompt, 2),
         "time_propagate_s": round(t_prop, 2),
         "fps_propagate": round(len(masks) / t_prop, 2),
@@ -139,6 +178,7 @@ def run_clip(predictor, clip, cfg, model_name, device, tag=""):
         "peak_mps_driver_gb": round(mem.peak_mps / 1e9, 2),
         "mask_dir": str(mask_dir.relative_to(ROOT)),
         **mask_metrics(masks),
+        "windows": window_stats(masks, times, mem_marks),
     }
     return res
 
@@ -149,9 +189,12 @@ def main():
     ap.add_argument("--device", choices=["mps", "cpu"], default="mps")
     ap.add_argument("--clips", nargs="*")
     ap.add_argument("--bf16", action="store_true", help="autocast bfloat16 (MPS)")
+    ap.add_argument("--config", default="stage0/clips.json", help="fichier de clips (relatif à la racine)")
+    ap.add_argument("--offload", action="store_true", help="init_state(offload_video_to_cpu=True)")
+    ap.add_argument("--offload-state", action="store_true", help="init_state(offload_state_to_cpu=True)")
     args = ap.parse_args()
 
-    cfg = json.loads((ROOT / "stage0" / "clips.json").read_text())
+    cfg = json.loads((ROOT / args.config).read_text())
     clips = [c for c in cfg["clips"] if not args.clips or c["id"] in args.clips]
 
     from sam2.build_sam import build_sam2_video_predictor
@@ -165,13 +208,17 @@ def main():
     RESULTS.mkdir(parents=True, exist_ok=True)
     for clip in clips:
         try:
-            tag = "_bf16" if args.bf16 else ""
+            tag = ("_bf16" if args.bf16 else "") + ("_offload" if args.offload else "") \
+                + ("_offstate" if args.offload_state else "")
             with torch.autocast(args.device, dtype=torch.bfloat16, enabled=args.bf16):
-                res = run_clip(predictor, clip, cfg, args.model, args.device, tag)
+                res = run_clip(predictor, clip, cfg, args.model, args.device, tag,
+                               offload_video=args.offload, offload_state=args.offload_state)
             res["time_model_load_s"] = round(t_load, 2)
         except Exception as e:  # consigner l'échec plutôt que d'arrêter le benchmark
             res = {"clip": clip["id"], "model": args.model, "device": args.device, "error": repr(e)}
-        out = RESULTS / f"{clip['id']}__{args.model}__{args.device}{'__bf16' if args.bf16 else ''}.json"
+        suffix = ("__bf16" if args.bf16 else "") + ("__offload" if args.offload else "") \
+            + ("__offstate" if args.offload_state else "")
+        out = RESULTS / f"{clip['id']}__{args.model}__{args.device}{suffix}.json"
         out.write_text(json.dumps(res, indent=2))
         print(json.dumps(res), flush=True)
 

@@ -1,0 +1,43 @@
+{
+  "license": "Mixkit Stock Video Free License (https://mixkit.co/license/#videoFree)",
+  "proxy_height": 720,
+  "bench_seconds": 5,
+  "clips": [
+    {
+      "id": "V1_vertical_4k60",
+      "case": 4,
+      "description": "Vertical 9:16 2160x3840 59,94 i/s, femme qui manipule son téléphone, fond vert uni",
+      "file": "mixkit-28311.mp4",
+      "url": "https://assets.mixkit.co/videos/28311/28311-2160.mp4",
+      "page": "https://mixkit.co/free-stock-video/girl-sending-a-selfie-by-cell-phone-on-a-green-28311/",
+      "start": 0,
+      "seconds": 14,
+      "box": [30, 100, 320, 720],
+      "points": [[185, 215], [150, 420], [180, 640]]
+    },
+    {
+      "id": "V2_vertical_selfie",
+      "case": 3,
+      "description": "Vertical 9:16 1080x1920 23,976 i/s, influenceuse face caméra, cheveux bouclés, mains, fond de boîtes de céréales chargé",
+      "file": "mixkit-42323.mp4",
+      "url": "https://assets.mixkit.co/videos/42323/42323-1080.mp4",
+      "page": "https://mixkit.co/free-stock-video/portrait-of-an-influencer-talking-to-the-camera-42323/",
+      "start": 0,
+      "seconds": 17,
+      "box": [0, 30, 405, 720],
+      "points": [[205, 230], [200, 480], [80, 250]]
+    },
+    {
+      "id": "L_breakdance_40s",
+      "case": 2,
+      "description": "Plan continu de 40 s (3840x2160, 23,976 i/s) : danseur de breakdance, rotations, poirier, cheveux bouclés, fond mur blanc",
+      "file": "mixkit-452.mp4",
+      "url": "https://assets.mixkit.co/videos/452/452-2160.mp4",
+      "page": "https://mixkit.co/free-stock-video/man-breakdancing-452/",
+      "start": 0,
+      "seconds": 40,
+      "box": [700, 150, 945, 720],
+      "points": [[850, 225], [785, 340], [780, 470], [805, 690]]
+    }
+  ]
+}

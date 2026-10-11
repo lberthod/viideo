@@ -1,0 +1,219 @@
+{
+  "clip": "L_breakdance_40s",
+  "source": "Mixkit 452 (https://mixkit.co/free-stock-video/man-breakdancing-452/), Mixkit Stock Video Free License, 3840x2160 H.264 23,976 i/s, 40,0 s, plan continu",
+  "proxy": "1280x720",
+  "frames": 959,
+  "model": "sam2.1_hiera_tiny bf16 MPS",
+  "runs": {
+    "bf16_gpu_separate_process": {
+      "file": "stage0/results/sam2/L_breakdance_40s__tiny__mps__bf16.json",
+      "note": "processus dédié",
+      "time_init_s": 9.56,
+      "time_propagate_s": 181.77,
+      "fps_propagate": 5.28,
+      "peak_rss_gb": 12.72,
+      "peak_mps_driver_gb": 24.31,
+      "fps_per_100_frames": [
+        4.73,
+        5.29,
+        5.99,
+        5.98,
+        5.04,
+        4.74,
+        5.32,
+        5.41,
+        5.16,
+        5.54
+      ],
+      "mps_driver_gb_per_100_frames": [
+        13.44,
+        13.52,
+        13.6,
+        13.68,
+        13.76,
+        13.84,
+        13.92,
+        14.01,
+        14.08,
+        14.13
+      ],
+      "rss_gb_per_100_frames": [
+        0.87,
+        0.91,
+        1.0,
+        1.1,
+        1.19,
+        1.29,
+        1.39,
+        1.49,
+        1.59,
+        1.64
+      ]
+    },
+    "bf16_offload_video": {
+      "file": "stage0/results/sam2/L_breakdance_40s__tiny__mps__bf16__offload.json",
+      "note": "offload_video_to_cpu=True ; charge système élevée pendant ce run (load ~28)",
+      "time_init_s": 13.22,
+      "time_propagate_s": 219.98,
+      "fps_propagate": 4.36,
+      "peak_rss_gb": 13.72,
+      "peak_mps_driver_gb": 3.14,
+      "fps_per_100_frames": [
+        5.12,
+        5.17,
+        5.13,
+        3.24,
+        3.01,
+        5.28,
+        4.84,
+        4.75,
+        4.06,
+        4.78
+      ],
+      "mps_driver_gb_per_100_frames": [
+        1.36,
+        1.44,
+        1.52,
+        1.6,
+        2.76,
+        2.84,
+        2.93,
+        3.0,
+        3.08,
+        3.14
+      ],
+      "rss_gb_per_100_frames": [
+        12.9,
+        12.97,
+        13.07,
+        13.17,
+        13.27,
+        13.37,
+        13.47,
+        13.56,
+        13.66,
+        13.72
+      ]
+    },
+    "bf16_offload_video_and_state": {
+      "file": "stage0/results/sam2/L_breakdance_40s__tiny__mps__bf16__offload__offstate.json",
+      "note": "offload_video_to_cpu + offload_state_to_cpu",
+      "time_init_s": 11.88,
+      "time_propagate_s": 177.98,
+      "fps_propagate": 5.39,
+      "peak_rss_gb": 14.24,
+      "peak_mps_driver_gb": 2.37,
+      "fps_per_100_frames": [
+        5.52,
+        5.6,
+        6.07,
+        6.19,
+        5.95,
+        5.62,
+        4.75,
+        5.52,
+        4.4,
+        4.59
+      ],
+      "mps_driver_gb_per_100_frames": [
+        1.28,
+        1.28,
+        1.28,
+        1.28,
+        1.28,
+        2.36,
+        2.36,
+        2.36,
+        2.36,
+        2.36
+      ],
+      "rss_gb_per_100_frames": [
+        12.95,
+        13.1,
+        13.24,
+        13.41,
+        13.57,
+        13.74,
+        13.88,
+        14.02,
+        14.16,
+        14.24
+      ]
+    },
+    "bf16_gpu_after_V1_V2_same_process": {
+      "file": "stage0/results/sam2/L_breakdance_40s__tiny__mps__bf16__run1_same_process.json",
+      "note": "même processus que V1/V2 : le cache MPS n'est pas rendu entre clips",
+      "time_init_s": 9.79,
+      "time_propagate_s": 189.44,
+      "fps_propagate": 5.06,
+      "peak_rss_gb": 13.06,
+      "peak_mps_driver_gb": 36.56,
+      "fps_per_100_frames": [
+        5.09,
+        5.21,
+        5.29,
+        5.65,
+        5.59,
+        5.73,
+        3.71,
+        4.46,
+        5.3,
+        5.67
+      ],
+      "mps_driver_gb_per_100_frames": [
+        24.5,
+        24.5,
+        24.5,
+        24.5,
+        24.5,
+        24.5,
+        24.5,
+        24.5,
+        24.56,
+        24.61
+      ],
+      "rss_gb_per_100_frames": [
+        1.0,
+        1.0,
+        1.08,
+        1.18,
+        1.27,
+        1.36,
+        1.45,
+        1.55,
+        1.59,
+        1.65
+      ]
+    }
+  },
+  "mask_quality": {
+    "empty_frames": 0,
+    "consecutive_iou_mean": 0.8484,
+    "consecutive_iou_min": 0.5993,
+    "frames_iou_below_0.9": 676,
+    "area_pct_min": 5.32,
+    "area_pct_max": 26.93,
+    "components_max": 4,
+    "consecutive_iou_mean_per_100_frames": [
+      0.8572,
+      0.7785,
+      0.754,
+      0.7769,
+      0.897,
+      0.8991,
+      0.8925,
+      0.8411,
+      0.8778,
+      0.9524
+    ],
+    "offload_vs_gpu_iou": "1.0 (masques identiques, voir compare__masks_tiny_mps_bf16__vs__masks_tiny_mps_bf16_offload*.json)"
+  },
+  "drift": "Aucune dérive visible : le sujet est suivi jusqu'à l'image 958 (poiriers, rotations, sortie partielle du cadre), sans fuite sur le mur ni perte. L'IoU consécutif bas (0,60 min) correspond aux mouvements rapides des membres à 24 i/s (vérifié images 163 et 235), pas à une dérive : il ne décroît pas avec le temps.",
+  "memory_findings": [
+    "Sans offload, init_state place toutes les images en 1024x1024 fp32 sur le GPU : ~12,6 Mo/image, 13,4 Go MPS en régime pour 959 images, pic 24,3 Go pendant le chargement.",
+    "Le pic RSS ~12,7 Go existe avec ou sans offload : load_video_frames charge d'abord toutes les images en fp32 sur CPU.",
+    "La mémoire de suivi ne croît que de ~0,7 Go sur 959 images (sorties par image) ; la vitesse ne baisse pas de façon systématique.",
+    "offload_video_to_cpu : pic MPS 3,1 Go ; + offload_state_to_cpu : 2,4 Go ; masques identiques ; vitesse équivalente aux erreurs de mesure près."
+  ],
+  "timing_noise": "Un build Rust/Tauri et un autre processus Python (worker vision) tournaient en parallèle (load average 10–30) : vitesses indicatives à ±30 %."
+}
