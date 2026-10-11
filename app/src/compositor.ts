@@ -57,8 +57,15 @@ export function preload(urls: string[]) {
   for (const u of urls) loadImage(u).catch(() => undefined);
 }
 
-/** Équivalent de `eq` puis `lutrgb` (température) de l'export. */
+/** Équivalent de `geq` (débord vert), `eq` puis `lutrgb` (température) de l'export. */
 function applyColor(data: Uint8ClampedArray, c: Composite) {
+  if (c.despill > 0.01) {
+    // media.rs::despill_filter : g' = g − s × max(g − max(r, b), 0)
+    for (let i = 0; i < data.length; i += 4) {
+      const spill = data[i + 1] - Math.max(data[i], data[i + 2]);
+      if (spill > 0) data[i + 1] -= c.despill * spill;
+    }
+  }
   const t = c.temperature * 60; // media.rs::temperature_offset
   if (c.brightness === 0 && c.contrast === 1 && c.saturation === 1 && t === 0) return;
   const b = c.brightness * 255;

@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{err, Result};
 use crate::media::Probe;
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 pub const MANIFEST: &str = "project.json";
 const SUBDIRS: [&str; 5] = ["media", "assets", "cache", "exports", "logs"];
 
@@ -203,6 +203,10 @@ pub struct Composite {
     /// Couleur de la lumière principale (#rrggbb).
     #[serde(default = "default_light_color")]
     pub light_color: String,
+    /// Suppression du débord vert du décor d'origine sur le sujet (0 = aucune, 1 = totale) :
+    /// le vert est ramené vers max(rouge, bleu), comme pour un fond vert.
+    #[serde(default)]
+    pub despill: f64,
 }
 
 fn default_light_y() -> f64 {
@@ -247,6 +251,7 @@ impl Default for Composite {
             light_x: 0.0,
             light_y: default_light_y(),
             light_color: default_light_color(),
+            despill: 0.0,
         }
     }
 }
@@ -269,6 +274,7 @@ impl Composite {
             ("relighting", self.relight, 0.0, 1.0),
             ("direction X de la lumière", self.light_x, -1.0, 1.0),
             ("direction Y de la lumière", self.light_y, -1.0, 1.0),
+            ("débord de vert", self.despill, 0.0, 1.0),
         ];
         for (name, v, lo, hi) in checks {
             if !v.is_finite() || v < lo || v > hi {
@@ -516,6 +522,10 @@ fn migrate(mut value: serde_json::Value, from: u32) -> Result<serde_json::Value>
                 value["composite"]["light_y"] = d.light_y.into();
                 value["composite"]["light_color"] = d.light_color.into();
             }
+            // 5 -> 6 : suppression du débord vert (désactivée).
+            5 => {
+                value["composite"]["despill"] = 0.0.into();
+            }
             _ => return err(format!("Aucune migration connue depuis le schéma {v}.")),
         }
         v += 1;
@@ -579,7 +589,7 @@ mod tests {
         v["composite"].as_object_mut().unwrap().remove("shadow");
         v["composite"].as_object_mut().unwrap().remove("light_wrap");
         v["composite"].as_object_mut().unwrap().remove("foreground");
-        for k in ["relight", "light_x", "light_y", "light_color"] {
+        for k in ["relight", "light_x", "light_y", "light_color", "despill"] {
             v["composite"].as_object_mut().unwrap().remove(k);
         }
         fs::write(dir.join(MANIFEST), serde_json::to_vec(&v).unwrap()).unwrap();
@@ -594,6 +604,7 @@ mod tests {
         assert!(q.manifest.composite.foreground.is_none());
         assert_eq!(q.manifest.composite.relight, 0.0);
         assert_eq!(q.manifest.composite.light_color, "#ffffff");
+        assert_eq!(q.manifest.composite.despill, 0.0);
     }
 
     #[test]

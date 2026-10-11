@@ -284,3 +284,38 @@ fn e2e_integration_export() {
     println!("export intégration {}x{} {:.2} s en {:.1} s", out.width, out.height, out.duration, t0.elapsed().as_secs_f64());
     assert!((out.duration - m.clip.duration).abs() < 0.2);
 }
+
+/// Ré-export d'un projet existant avec des réglages modifiés (ombres, normales et élément du projet) :
+///   VIDEEO_E2E_PROJECT=../../cache/v3_hiker_anim VIDEEO_E2E_SET='{"despill":0.9}' VIDEEO_E2E_OUT=o.mp4 \
+///   cargo test e2e_reexport -- --ignored --nocapture
+#[test]
+#[ignore]
+fn e2e_reexport() {
+    let p = Project::open(std::path::Path::new(&std::env::var("VIDEEO_E2E_PROJECT").unwrap())).unwrap();
+    let tools = Tools::detect();
+    let m = &p.manifest;
+    let proxy = m.proxy.as_ref().unwrap();
+    let mask = m.segmentation.mask.as_ref().unwrap();
+    let mut c = serde_json::to_value(&m.composite).unwrap();
+    let set: serde_json::Value = serde_json::from_str(&std::env::var("VIDEEO_E2E_SET").unwrap_or("{}".into())).unwrap();
+    for (k, v) in set.as_object().unwrap() {
+        c[k] = v.clone();
+    }
+    let c: crate::project::Composite = serde_json::from_value(c).unwrap();
+    c.validate().unwrap();
+    let cache = |sub: &str| Some(p.dir.join(format!("cache/{sub}/{}", &mask.key[..16]))).filter(|d| d.exists());
+    let (w, h) = media::output_size(m.source.probe.display_width, m.source.probe.display_height);
+    let job = ExportJob {
+        src: p.source_path(), start: m.clip.start, duration: m.clip.duration, fps: (proxy.fps_num, proxy.fps_den),
+        has_audio: false, out_width: w, out_height: h, proxy_height: proxy.height,
+        masks_dir: p.resolve(&mask.dir).unwrap(),
+        background: c.background.as_deref().map(|b| p.resolve(b).unwrap()),
+        element: c.foreground.as_ref().map(|f| p.resolve(&f.path).unwrap()),
+        composite: c, quality: crate::project::ExportQuality::Balanced, videotoolbox: tools.videotoolbox,
+        shadows_dir: cache("shadows"), normals_dir: cache("normals"),
+        dest: PathBuf::from(std::env::var("VIDEEO_E2E_OUT").unwrap()),
+    };
+    let t0 = std::time::Instant::now();
+    media::export(&tools.ffmpeg, &job, Arc::new(Mutex::new(None)), |_| {}).unwrap();
+    println!("ré-export en {:.1} s", t0.elapsed().as_secs_f64());
+}

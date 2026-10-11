@@ -271,7 +271,7 @@ watch(composite, (c) => {
 }, { deep: true });
 
 function resetLook() {
-  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0, shadow: 0, light_wrap: 0, relight: 0 };
+  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0, shadow: 0, light_wrap: 0, relight: 0, despill: 0 };
 }
 
 async function toggleCleanup(ev: Event) {
@@ -473,6 +473,7 @@ interface DemoSpec {
   shadow?: number; light_wrap?: number; harmonize?: boolean;
   /** Relighting : force, la lumière étant lue sur le décor. */
   relight?: number;
+  despill?: number;
 }
 async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
@@ -522,6 +523,7 @@ async function runDemo(spec: DemoSpec) {
   }
   if (spec.shadow) await setShadow(spec.shadow);
   if (spec.light_wrap) composite.value = { ...composite.value, light_wrap: spec.light_wrap };
+  if (spec.despill) composite.value = { ...composite.value, despill: spec.despill };
   if (spec.lighting) applyLighting(spec.lighting);
   if (spec.harmonize || !spec.lighting) await autoHarmonize();
   if (spec.relight) await lightFromBackground(spec.relight);
@@ -711,6 +713,10 @@ function stepState(id: Step) {
             <label>Light wrap (lumière du décor sur les bords) <span class="mono">{{ composite.light_wrap.toFixed(2) }}</span>
               <input id="light-wrap" type="range" min="0" max="1" step="0.05" v-model.number="composite.light_wrap" />
             </label>
+            <label>Retirer le vert du décor d'origine (despill) <span class="mono">{{ composite.despill.toFixed(2) }}</span>
+              <input id="despill" type="range" min="0" max="1" step="0.05" v-model.number="composite.despill" />
+            </label>
+            <p class="muted small">Neutralise les restes de feuillage ou de fond vert collés aux bords du sujet. À éviter si le sujet porte du vert.</p>
           </fieldset>
           <ElementLibrary :current="composite.foreground" :busy="!!job" @choose="chooseElement"
             @update="composite = { ...composite, foreground: $event }" @autoplace="autoPlace" @error="error = $event" />

@@ -19,6 +19,7 @@ export interface Composite {
   edge: number; temperature: number; bg_blur: number;
   shadow: number; light_wrap: number; foreground: Foreground | null;
   relight: number; light_x: number; light_y: number; light_color: string;
+  despill: number;
 }
 
 /** Élément de premier plan : largeur et centre X en fraction de la largeur, bas en fraction de la hauteur. */

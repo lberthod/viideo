@@ -219,6 +219,13 @@ pub fn relight_coeffs(c: &Composite) -> RelightCoeffs {
     }
 }
 
+/// Suppression du débord vert (même formule dans compositor.ts) : g' = g − s × max(g − max(r, b), 0).
+/// Un sujet sans vert franc (peau, beige, bleu nuit, bordeaux) n'est pas modifié ; les restes de
+/// feuillage ou de fond vert collés au bord du masque deviennent neutres.
+pub fn despill_filter(s: f64) -> String {
+    format!(",format=gbrp,geq=r='r(X\\,Y)':g='g(X\\,Y)-{s:.3}*max(g(X\\,Y)-max(r(X\\,Y)\\,b(X\\,Y))\\,0)':b='b(X\\,Y)'")
+}
+
 /// Courbe de bord appliquée au masque adouci (mêmes formules dans compositor.ts) :
 /// alpha' = clip((alpha − seuil) × 2 + 128), seuil = 128 + bord × 120.
 pub fn edge_threshold(edge: f64) -> f64 {
@@ -287,8 +294,9 @@ colorchannelmixer=rr={kr:.4}:rg=0:rb=0:ra={o:.4}:gr=0:gg={kg:.4}:gb=0:ga={o:.4}:
     } else {
         "[src]"
     };
+    let despill = if c.despill > 0.01 { despill_filter(c.despill) } else { String::new() };
     g.push_str(&format!(
-        "[0:v]fps={fps},scale={w}:{h}:flags=bicubic,setsar=1,\
+        "[0:v]fps={fps},scale={w}:{h}:flags=bicubic,setsar=1{despill},\
 eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}{src_out};",
         b = c.brightness, ct = c.contrast, sa = c.saturation));
     if relight {
@@ -432,7 +440,7 @@ mod tests {
         assert!(g.contains("x=(W-w)/2+0.2500*W"));
         assert!(g.contains("lut=c0='clip((val-158.00)*2+128"), "{g}");
         assert!(g.contains("lutrgb=r='clip(val+-6.00"), "{g}");
-        assert!(!g.contains("maskedmerge") && !g.contains("[el]"), "options désactivées : graphe minimal");
+        assert!(!g.contains("maskedmerge") && !g.contains("[el]") && !g.contains("geq"), "options désactivées : graphe minimal");
         // Ombre + light wrap + élément : indices d'entrée et étapes attendus.
         let mut job2 = job;
         job2.composite.shadow = 0.5;
@@ -455,6 +463,9 @@ mod tests {
         job3.normals_dir = Some("n".into());
         let g = filter_graph(&job3);
         assert!(g.starts_with("[5:v]scale=1920:1080:flags=bilinear,format=rgba,colorchannelmixer=rr=1.7150:rg=0.0000:rb=1.0290:ra=-1.3720"), "{g}");
+        job3.composite.despill = 0.8;
+        let g = filter_graph(&job3);
+        assert!(g.contains("setsar=1,format=gbrp,geq=r='r(X\\,Y)':g='g(X\\,Y)-0.800*max(g(X\\,Y)-max(r(X\\,Y)\\,b(X\\,Y))\\,0)'"), "{g}");
         assert!(g.contains("[s1][gain]blend=all_expr='min(255\\,A*B/127.5)',format=rgba[src]"), "{g}");
     }
 

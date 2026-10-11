@@ -93,6 +93,15 @@ Coût : la génération et le détourage d'un élément prennent ~15–20 s (FLU
 
 Quand le randonneur tient son sac à la main, la bretelle, le bras et la jambe referment une poche de décor. SAM la détourait correctement comme un vide, mais le nettoyage du masque bouchait tous les trous fermés jusqu'à 0,2 % de l'image (~1 840 px en 720p) : la poche était remplie avec l'image source (feuillage vert). Mesuré sur les masques bruts : poches de 800 à 2 700 px, vrais défauts de SAM de quelques dizaines de px (médiane 71). Le seuil passe à 0,02 % (~180 px) ; les masques nettoyés avec l'ancienne règle sont marqués à recalculer (clé `cleanup-v2`). Test : `test_clean_keeps_scenery_pocket_closed_by_subject`.
 
+## Despill : restes de feuillage collés aux bords
+
+![Bord du sac, avant / après despill](despill-zoom.jpg)
+
+Même après correction des poches, des pixels du décor d'origine restent collés au bord du masque : liseré de 1 à 2 px (pixels mélangés sujet/feuillage) et petites plaques au bord du sac, que SAM inclut. Sur le nouveau décor, ils apparaissent en vert.
+
+- Retirer ces pixels du masque par la couleur a été essayé puis **abandonné** : comparée globalement, la couleur confond un pantalon blanc surexposé avec des reflets d'eau ; comparée localement, elle mord sur la main et la hanche dès que la fenêtre s'élargit.
+- Solution retenue, celle des incrustateurs : le **despill**. Le vert du sujet est ramené vers max(rouge, bleu) : g' = g − s × max(g − max(r, b), 0). Peau, beige, bordeaux, bleu nuit ne changent pas (le vert n'y dépasse pas le rouge ou le bleu) ; les restes de feuillage deviennent neutres. Export : `geq` (~22 images/s en 1080p, seulement si activé) ; aperçu : même formule. À éviter si le sujet porte du vert.
+
 ## Ce qui reste perfectible
 
 - **Lumière du sujet** : le relighting directionnel donne le bon côté et la bonne couleur, mais sa forme vient du masque : il ne connaît ni le relief du visage (nez, orbites) ni les plis des vêtements, et il n'efface pas les ombres de la prise de vue d'origine. Un contre-jour marqué (soleil derrière le sujet) n'est pas reproduit.
@@ -101,4 +110,4 @@ Quand le randonneur tient son sac à la main, la bretelle, le bras et la jambe r
 
 ## Projet
 
-**Schéma 5**, avec des migrations testées : ombre, light wrap, élément de premier plan (schéma 4), relighting (`relight`, `light_x`, `light_y`, `light_color`, schéma 5).
+**Schéma 6**, avec des migrations testées : ombre, light wrap, élément de premier plan (schéma 4), relighting (`relight`, `light_x`, `light_y`, `light_color`, schéma 5), despill (`despill`, schéma 6).
