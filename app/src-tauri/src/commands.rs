@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::env::{self, Tools, ToolStatus};
 use crate::error::{err, AppError, Result};
 use crate::media::{self, ExportJob, Probe};
-use crate::project::{self, Composite, ExportRecord, Mask, MaskStatus, Project, Prompt, Proxy, MAX_CLIP_SECONDS};
+use crate::project::{self, Composite, ExportQuality, ExportRecord, Mask, MaskStatus, Project, Prompt, Proxy, MAX_CLIP_SECONDS};
 use crate::worker::Worker;
 
 pub struct AppState {
@@ -150,10 +150,15 @@ pub async fn dev_autoload(state: State<'_, AppState>) -> Result<Option<ProjectVi
     }
 }
 
-/// Mode développement : VIDEEO_DEV_DEMO=<image de décor> déroule un scénario complet au démarrage.
+/// Mode développement : VIDEEO_DEV_DEMO=<fichier JSON du scénario> déroule un parcours complet au démarrage.
+/// Une seule fois par processus : le rechargement à chaud du frontend ne relance pas le scénario.
 #[tauri::command]
 pub fn dev_demo() -> Option<String> {
-    std::env::var("VIDEEO_DEV_DEMO").ok()
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return None;
+    }
+    std::env::var("VIDEEO_DEV_DEMO").ok().and_then(|p| fs::read_to_string(p).ok())
 }
 
 #[tauri::command]
@@ -228,11 +233,13 @@ pub fn set_prompts(state: State<'_, AppState>, prompts: Vec<Prompt>) -> Result<P
     })
 }
 
-/// Démarre (ou réutilise) le worker du projet, charge le modèle et la vidéo proxy.
+/// Démarre (ou réutilise) le worker du projet et charge le modèle.
 fn ensure_worker(state: &AppState, app: &AppHandle) -> Result<Arc<Worker>> {
-    let (root, proxy_key, proxy_dir, model, dtype) = with_project(state, |p| {
-        let px = p.manifest.proxy.as_ref().ok_or_else(|| AppError::Msg("Préparez d'abord l'extrait (proxy).".into()))?;
-        Ok((p.dir.clone(), px.key.clone(), p.resolve(&px.dir)?, p.manifest.segmentation.model.clone(), p.manifest.segmentation.dtype.clone()))
+    let (root, model, dtype) = with_project(state, |p| {
+        if p.manifest.proxy.is_none() {
+            return err("Préparez d'abord l'extrait (proxy).");
+        }
+        Ok((p.dir.clone(), p.manifest.segmentation.model.clone(), p.manifest.segmentation.dtype.clone()))
     })?;
     let mut slot = state.worker.lock().unwrap();
     let reuse = slot.as_ref().filter(|w| w.is_alive() && w.root == root).cloned();
@@ -251,13 +258,9 @@ fn ensure_worker(state: &AppState, app: &AppHandle) -> Result<Arc<Worker>> {
         }
     };
     drop(slot);
+    // Le worker ne charge plus la vidéo entière : aperçu et propagation lisent seulement les images utiles.
     w.request("load_model", json!({"model": model, "dtype": dtype}))?;
-    let mut loaded = w.loaded_video.lock().unwrap();
-    if loaded.as_deref() != Some(proxy_key.as_str()) {
-        w.request("init_video", json!({"frames_dir": proxy_dir}))?;
-        *loaded = Some(proxy_key);
-    }
-    Ok(w.clone())
+    Ok(w)
 }
 
 /// `ensure_worker` peut bloquer plusieurs secondes (démarrage Python, chargement du modèle) :
@@ -277,13 +280,14 @@ pub struct PreviewResult {
 #[tauri::command]
 pub async fn preview_mask(app: AppHandle, state: State<'_, AppState>, frame: u32) -> Result<PreviewResult> {
     let _busy = BusyGuard::acquire(&state.busy, "aperçu du masque")?;
-    let (prompts, out) = with_project(&state, |p| {
+    let (prompts, out, frames_dir) = with_project(&state, |p| {
         let prompts: Vec<Prompt> = p.manifest.segmentation.prompts.iter().filter(|pr| pr.frame == frame).cloned().collect();
         if prompts.is_empty() {
             return err("Ajoutez au moins un point ou un rectangle sur cette image.");
         }
+        let px = p.manifest.proxy.as_ref().ok_or_else(|| AppError::Msg("Proxy manquant.".into()))?;
         let out = p.dir.join(format!("cache/preview/f{frame:05}_{}.png", chrono::Local::now().timestamp_millis()));
-        Ok((prompts, out))
+        Ok((prompts, out, p.resolve(&px.dir)?))
     })?;
     let w = worker_for(&app).await?;
     let r = blocking(move || {
@@ -291,11 +295,13 @@ pub async fn preview_mask(app: AppHandle, state: State<'_, AppState>, frame: u32
             // On ne garde pas les anciens aperçus.
             if let Ok(rd) = fs::read_dir(dir) {
                 for e in rd.flatten() {
-                    let _ = fs::remove_file(e.path());
+                    if e.path().is_file() {
+                        let _ = fs::remove_file(e.path());
+                    }
                 }
             }
         }
-        w.request("preview", json!({"out_png": out, "prompts": prompts}))
+        w.request("preview", json!({"frames_dir": frames_dir, "frame": frame, "out_png": out, "prompts": prompts}))
     }).await?;
     Ok(PreviewResult {
         frame,
@@ -304,21 +310,28 @@ pub async fn preview_mask(app: AppHandle, state: State<'_, AppState>, frame: u32
     })
 }
 
+/// Taille des blocs de propagation : ~5 Go de RAM au plus (≈ 12,6 Mo par image, mesuré à l'étape 0).
+const CHUNK_FRAMES: u32 = 400;
+
 #[tauri::command]
 pub async fn propagate_mask(app: AppHandle, state: State<'_, AppState>) -> Result<ProjectView> {
     let _busy = BusyGuard::acquire(&state.busy, "propagation du masque")?;
-    let (key, rel_dir, out_dir, prompts) = with_project(&state, |p| {
+    let (key, rel_dir, out_dir, prompts, cleanup, frames_dir) = with_project(&state, |p| {
         if p.manifest.segmentation.prompts.is_empty() {
             return err("Sélectionnez d'abord le sujet (points ou rectangle).");
         }
         let key = p.mask_key()?;
         let rel = format!("cache/masks/{}", &key[..16]);
-        Ok((key, rel.clone(), p.resolve(&rel)?, p.manifest.segmentation.prompts.clone()))
+        let cleanup = p.manifest.segmentation.cleanup.then(|| json!({"min_island_ratio": 0.05, "max_hole_ratio": 0.002}));
+        let px = p.manifest.proxy.as_ref().ok_or_else(|| AppError::Msg("Proxy manquant.".into()))?;
+        Ok((key, rel.clone(), p.resolve(&rel)?, p.manifest.segmentation.prompts.clone(), cleanup, p.resolve(&px.dir)?))
     })?;
     let w = worker_for(&app).await?;
+    // Le dossier du masque n'est pas vidé : s'il contient une propagation interrompue pour les mêmes
+    // invites, le worker reprend au premier bloc non terminé (chunks.json).
     let r = blocking(move || {
-        let _ = fs::remove_dir_all(&out_dir);
-        w.request("propagate", json!({"out_dir": out_dir, "prompts": prompts}))
+        w.request("propagate", json!({"frames_dir": frames_dir, "out_dir": out_dir, "prompts": prompts,
+                                      "cleanup": cleanup, "chunk_size": CHUNK_FRAMES, "resume": true}))
     }).await?;
     with_project(&state, |p| {
         // Les anciens masques sont régénérables : on ne garde que le courant.
@@ -335,6 +348,7 @@ pub async fn propagate_mask(app: AppHandle, state: State<'_, AppState>) -> Resul
             frames: r["written"].as_u64().unwrap_or(0) as u32,
             seconds: r["seconds"].as_f64().unwrap_or(0.0),
             empty_frames: r["empty_frames"].as_u64().unwrap_or(0) as u32,
+            flagged: r["flagged"].as_u64().unwrap_or(0) as u32,
         });
         p.refresh_mask_status()?;
         p.touch_and_save()?;
@@ -431,6 +445,8 @@ pub async fn export_video(app: AppHandle, state: State<'_, AppState>) -> Result<
             masks_dir: p.resolve(&mask.dir)?,
             background: m.composite.background.as_deref().map(|b| p.resolve(b)).transpose()?,
             composite: m.composite.clone(),
+            quality: m.export_settings.quality.clone(),
+            videotoolbox: state.tools.videotoolbox,
             dest: p.resolve(&rel)?,
         }, rel))
     })?;
@@ -453,6 +469,109 @@ pub async fn export_video(app: AppHandle, state: State<'_, AppState>) -> Result<
         p.touch_and_save()
     })?;
     Ok(record)
+}
+
+/// Statistiques par image et images suspectes du masque courant (quality.json écrit par le worker).
+#[tauri::command]
+pub fn mask_quality(state: State<'_, AppState>) -> Result<Option<serde_json::Value>> {
+    with_project(&state, |p| {
+        let seg = &p.manifest.segmentation;
+        let Some(mask) = seg.mask.as_ref().filter(|_| seg.status == MaskStatus::Ready) else { return Ok(None) };
+        let path = p.resolve(&mask.dir)?.join("quality.json");
+        match fs::read_to_string(path) {
+            Ok(text) => Ok(Some(serde_json::from_str(&text)?)),
+            Err(_) => Ok(None),
+        }
+    })
+}
+
+#[tauri::command]
+pub fn set_cleanup(state: State<'_, AppState>, enabled: bool) -> Result<ProjectView> {
+    with_project(&state, |p| {
+        p.manifest.segmentation.cleanup = enabled;
+        p.refresh_mask_status()?;
+        p.touch_and_save()?;
+        Ok(view(p))
+    })
+}
+
+#[tauri::command]
+pub fn set_export_quality(state: State<'_, AppState>, quality: ExportQuality) -> Result<ProjectView> {
+    with_project(&state, |p| {
+        p.manifest.export_settings.quality = quality;
+        p.touch_and_save()?;
+        Ok(view(p))
+    })
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let Ok(rd) = fs::read_dir(path) else { return 0 };
+    rd.flatten().map(|e| match e.metadata() {
+        Ok(m) if m.is_dir() => dir_size(&e.path()),
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    }).sum()
+}
+
+#[derive(Serialize)]
+pub struct DiskUsage {
+    pub proxy_current: u64,
+    pub proxy_stale: u64,
+    pub masks_current: u64,
+    pub masks_stale: u64,
+    pub previews: u64,
+    pub assets: u64,
+    pub exports: u64,
+}
+
+/// Répartit l'espace disque du projet entre éléments courants et caches périmés.
+fn disk_usage_of(p: &Project) -> DiskUsage {
+    let cur_proxy = p.manifest.proxy.as_ref().map(|x| p.dir.join(&x.dir));
+    let cur_mask = p.manifest.segmentation.mask.as_ref().map(|x| p.dir.join(&x.dir));
+    let split = |dir: &Path, current: &Option<PathBuf>| -> (u64, u64) {
+        let (mut cur, mut stale) = (0, 0);
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let size = if e.path().is_dir() { dir_size(&e.path()) } else { e.metadata().map(|m| m.len()).unwrap_or(0) };
+            if current.as_deref() == Some(e.path().as_path()) { cur += size } else { stale += size }
+        }
+        (cur, stale)
+    };
+    let (proxy_current, proxy_stale) = split(&p.dir.join("media"), &cur_proxy);
+    let (masks_current, masks_stale) = split(&p.dir.join("cache/masks"), &cur_mask);
+    DiskUsage {
+        proxy_current, proxy_stale, masks_current, masks_stale,
+        previews: dir_size(&p.dir.join("cache/preview")),
+        assets: dir_size(&p.dir.join("assets")),
+        exports: dir_size(&p.dir.join("exports")),
+    }
+}
+
+#[tauri::command]
+pub fn disk_usage(state: State<'_, AppState>) -> Result<DiskUsage> {
+    with_project(&state, |p| Ok(disk_usage_of(p)))
+}
+
+/// Supprime les caches régénérables qui ne servent plus (anciens proxies, anciens masques, aperçus).
+/// Les médias sources, décors importés et exports ne sont jamais touchés.
+#[tauri::command]
+pub fn clean_cache(state: State<'_, AppState>) -> Result<DiskUsage> {
+    if state.busy.lock().unwrap().is_some() {
+        return err("Une tâche est en cours : nettoyez le cache après sa fin.");
+    }
+    with_project(&state, |p| {
+        let keep: Vec<PathBuf> = [p.manifest.proxy.as_ref().map(|x| p.dir.join(&x.dir)),
+                                  p.manifest.segmentation.mask.as_ref().map(|x| p.dir.join(&x.dir))]
+            .into_iter().flatten().collect();
+        for sub in ["media", "cache/masks", "cache/preview"] {
+            for e in fs::read_dir(p.dir.join(sub)).into_iter().flatten().flatten() {
+                if keep.contains(&e.path()) {
+                    continue;
+                }
+                let _ = if e.path().is_dir() { fs::remove_dir_all(e.path()) } else { fs::remove_file(e.path()) };
+            }
+        }
+        Ok(disk_usage_of(p))
+    })
 }
 
 #[tauri::command]

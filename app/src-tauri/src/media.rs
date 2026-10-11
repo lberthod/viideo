@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{err, Result};
-use crate::project::{Composite, PROXY_HEIGHT};
+use crate::project::{Composite, ExportQuality, PROXY_HEIGHT};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Probe {
@@ -116,7 +116,7 @@ pub fn extract_proxy(ffmpeg: &Path, ffprobe: &Path, src: &Path, start: f64, dura
         .arg("-i").arg(src)
         .args(["-t", &format!("{duration:.3}"), "-an",
                "-vf", &format!("fps={}/{},scale=-2:{PROXY_HEIGHT}:flags=bicubic", fps.0, fps.1),
-               "-q:v", "2", "-start_number", "0"])
+               "-q:v", "3", "-start_number", "0"])
         .arg(tmp.join("%05d.jpg")))?;
     let frames = fs::read_dir(&tmp)?.filter(|e| e.as_ref().map(|e| e.path().extension().is_some_and(|x| x == "jpg")).unwrap_or(false)).count() as u32;
     if frames == 0 {
@@ -150,7 +150,31 @@ pub struct ExportJob {
     pub masks_dir: PathBuf,
     pub background: Option<PathBuf>,
     pub composite: Composite,
+    pub quality: ExportQuality,
+    pub videotoolbox: bool,
     pub dest: PathBuf,
+}
+
+/// Encodeur par préréglage. « Rapide » utilise l'encodeur matériel VideoToolbox (3 à 3,5× plus
+/// rapide que x264 en 4K, mesuré à l'étape 0) ; repli sur x264 veryfast s'il est absent.
+pub fn encoder_args(q: &ExportQuality, videotoolbox: bool) -> Vec<&'static str> {
+    match q {
+        ExportQuality::Fast if videotoolbox => vec!["-c:v", "h264_videotoolbox", "-q:v", "65", "-allow_sw", "1"],
+        ExportQuality::Fast => vec!["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"],
+        ExportQuality::Balanced => vec!["-c:v", "libx264", "-preset", "medium", "-crf", "18"],
+        ExportQuality::High => vec!["-c:v", "libx264", "-preset", "slow", "-crf", "16"],
+    }
+}
+
+/// Courbe de bord appliquée au masque adouci (mêmes formules dans compositor.ts) :
+/// alpha' = clip((alpha − seuil) × 2 + 128), seuil = 128 + bord × 120.
+pub fn edge_threshold(edge: f64) -> f64 {
+    128.0 + edge * 120.0
+}
+
+/// Décalage rouge/bleu de la température (mêmes formules dans compositor.ts).
+pub fn temperature_offset(t: f64) -> f64 {
+    t * 60.0
 }
 
 fn even(v: f64) -> u32 {
@@ -174,10 +198,21 @@ pub fn filter_graph(job: &ExportJob) -> String {
     let x = format!("(W-w)/2+{:.4}*W", c.subject_x);
     let y = format!("(H-h)/2+{:.4}*H", c.subject_y);
     let blur = if feather >= 0.5 { format!(",boxblur={feather:.2}:1") } else { String::new() };
+    let edge = if c.edge.abs() > 1e-3 {
+        format!(",lut=c0='clip((val-{:.2})*2+128\\,0\\,255)'", edge_threshold(c.edge))
+    } else {
+        String::new()
+    };
+    let temp = if c.temperature.abs() > 1e-3 {
+        let t = temperature_offset(c.temperature);
+        format!(",lutrgb=r='clip(val+{t:.2}\\,0\\,255)':b='clip(val-{t:.2}\\,0\\,255)'")
+    } else {
+        String::new()
+    };
     format!(
         "[0:v]fps={fn_}/{fd},scale={w}:{h}:flags=bicubic,setsar=1,\
-eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba[src];\
-[1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}[m];\
+eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}[src];\
+[1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}{edge}[m];\
 [src][m]alphamerge,scale={sw}:{sh}:flags=bicubic[fg];\
 [2:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=rgba[bg];\
 [bg][fg]overlay=x={x}:y={y}:shortest=1:format=auto,format=yuv420p[out]",
@@ -202,7 +237,8 @@ pub fn export(ffmpeg: &Path, job: &ExportJob, slot: Arc<Mutex<Option<Child>>>, m
     if job.has_audio {
         cmd.args(["-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k"]);
     }
-    cmd.args(["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"])
+    cmd.args(encoder_args(&job.quality, job.videotoolbox))
+        .args(["-pix_fmt", "yuv420p", "-movflags", "+faststart"])
         .arg(&part)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -259,12 +295,15 @@ mod tests {
         let job = ExportJob {
             src: "a.mov".into(), start: 0.0, duration: 2.0, fps: (25, 1), has_audio: false,
             out_width: 1920, out_height: 1080, proxy_height: 720, masks_dir: "m".into(), background: None,
-            composite: Composite { subject_scale: 0.5, subject_x: 0.25, ..Composite::default() }, dest: "o.mp4".into(),
+            composite: Composite { subject_scale: 0.5, subject_x: 0.25, edge: 0.25, temperature: -0.1, ..Composite::default() },
+            quality: ExportQuality::Fast, videotoolbox: true, dest: "o.mp4".into(),
         };
         let g = filter_graph(&job);
         assert!(g.contains("fps=25/1"));
         assert!(g.contains("alphamerge,scale=960:540"));
         assert!(g.contains("boxblur=2.25:1"), "l'adoucissement suit l'échelle proxy -> sortie : {g}");
         assert!(g.contains("x=(W-w)/2+0.2500*W"));
+        assert!(g.contains("lut=c0='clip((val-158.00)*2+128"), "{g}");
+        assert!(g.contains("lutrgb=r='clip(val+-6.00"), "{g}");
     }
 }

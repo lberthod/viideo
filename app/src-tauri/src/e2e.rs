@@ -43,19 +43,21 @@ fn full_pipeline() {
     let w = Worker::spawn(&tools, &p.dir, move |ev| { *pr.lock().unwrap() = ev["done"].as_u64().unwrap_or(0); }).unwrap();
     println!("{}", w.request("ping", json!({})).unwrap());
     w.request("load_model", json!({"model": "tiny", "dtype": "bf16"})).unwrap();
-    w.request("init_video", json!({"frames_dir": p.resolve(&rel).unwrap()})).unwrap();
-    let pv = w.request("preview", json!({"out_png": p.dir.join("cache/preview/x.png"), "prompts": [prompts[0].clone()]})).unwrap();
+    let frames_dir = p.resolve(&rel).unwrap();
+    let pv = w.request("preview", json!({"frames_dir": frames_dir, "frame": 0, "out_png": p.dir.join("cache/preview/x.png"), "prompts": [prompts[0].clone()]})).unwrap();
     println!("aperçu {pv}");
     // Un chemin hors du projet doit être refusé par le worker.
-    assert!(w.request("preview", json!({"out_png": "/tmp/evil.png", "prompts": [prompts[0].clone()]})).is_err());
+    assert!(w.request("preview", json!({"frames_dir": frames_dir, "frame": 0, "out_png": "/tmp/evil.png", "prompts": [prompts[0].clone()]})).is_err());
 
     let mask_key = p.mask_key().unwrap();
     let mask_rel = format!("cache/masks/{}", &mask_key[..16]);
-    let res = w.request("propagate", json!({"out_dir": p.resolve(&mask_rel).unwrap(), "prompts": prompts})).unwrap();
+    let res = w.request("propagate", json!({"frames_dir": frames_dir, "out_dir": p.resolve(&mask_rel).unwrap(), "prompts": prompts, "chunk_size": 32,
+                                           "cleanup": {"min_island_ratio": 0.05, "max_hole_ratio": 0.002}})).unwrap();
+    assert!(p.resolve(&mask_rel).unwrap().join("quality.json").exists(), "quality.json écrit");
     println!("propagation {res}");
     assert_eq!(res["written"].as_u64().unwrap() as u32, r.frames);
     assert!(*progress.lock().unwrap() > 0, "événements de progression reçus");
-    p.manifest.segmentation.mask = Some(Mask { key: mask_key, dir: mask_rel.clone(), frames: r.frames, seconds: 0.0, empty_frames: 0 });
+    p.manifest.segmentation.mask = Some(Mask { key: mask_key, dir: mask_rel.clone(), frames: r.frames, seconds: 0.0, empty_frames: 0, flagged: 0 });
     p.refresh_mask_status().unwrap();
     assert_eq!(p.manifest.segmentation.status, MaskStatus::Ready);
     w.shutdown();
@@ -65,7 +67,8 @@ fn full_pipeline() {
     let job = ExportJob {
         src: clip.clone(), start: 0.0, duration: 3.0, fps, has_audio: probe.has_audio, out_width: ow, out_height: oh,
         proxy_height: r.height, masks_dir: p.resolve(&mask_rel).unwrap(), background: None,
-        composite: Composite { subject_scale: 0.8, subject_x: 0.1, ..Composite::default() }, dest: dest.clone(),
+        composite: Composite { subject_scale: 0.8, subject_x: 0.1, edge: 0.15, temperature: 0.1, ..Composite::default() },
+        quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox, dest: dest.clone(),
     };
     let mut last = 0.0;
     media::export(&tools.ffmpeg, &job, Arc::new(Mutex::new(None)), |f| last = f).unwrap();

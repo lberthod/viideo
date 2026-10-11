@@ -5,6 +5,8 @@ sans coût d'API par défaut. Spécification complète : [docs/brief.md](docs/br
 
 ## État
 
+**Étape 2 — cohérence et qualité : terminée.** Propagation par blocs avec reprise, nettoyage et détection de dérive, avant/après, harmonisation des couleurs, préréglages d'export, gestion du cache. Voir [docs/stage2/README.md](docs/stage2/README.md).
+
 **Étape 1 — MVP manuel : terminé.** App Tauri + Vue + Rust : import, extrait, sélection du sujet, masque SAM 2 propagé et corrigeable, décor, export MP4. Voir [docs/stage1/README.md](docs/stage1/README.md).
 
 ```bash

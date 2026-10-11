@@ -35,6 +35,11 @@ pub fn run() {
             commands::set_composite,
             commands::export_video,
             commands::project_path,
+            commands::mask_quality,
+            commands::set_cleanup,
+            commands::set_export_quality,
+            commands::disk_usage,
+            commands::clean_cache,
         ])
         .on_window_event(|window, event| {
             // Fermer la fenêtre arrête proprement le worker Python.

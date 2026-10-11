@@ -1,0 +1,8 @@
+{
+  "background": "/Users/loicberthod/Desktop/Coding/videeo/stage0/results/backgrounds/mountain_terrace_1280x720.png",
+  "start": 0,
+  "duration": 5,
+  "box": [440, 60, 910, 719],
+  "points": [[700, 180], [700, 340]],
+  "export_quality": "balanced"
+}

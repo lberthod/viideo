@@ -1,0 +1,8 @@
+{
+  "background": "/Users/loicberthod/Desktop/Coding/videeo/stage0/results/backgrounds/studio_loft_1280x720.png",
+  "start": 0,
+  "duration": 40,
+  "box": [700, 150, 945, 720],
+  "points": [[850, 225], [785, 340], [780, 470], [805, 690]],
+  "export_quality": "fast"
+}

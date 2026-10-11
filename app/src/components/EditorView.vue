@@ -4,9 +4,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
-  api, errorText, fileUrl, formatTime, frameName, onExportProgress, onMaskProgress,
-  type Composite, type ExportRecord, type Prompt, type ProjectView,
+  api, errorText, fileUrl, formatBytes, formatTime, frameName, onExportProgress, onMaskProgress,
+  type Composite, type DiskUsage, type ExportQuality, type ExportRecord, type MaskQuality, type Prompt, type ProjectView,
 } from "../api";
+import { harmonize, loadImage, preload } from "../compositor";
 import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
 
 const props = defineProps<{ initial: ProjectView }>();
@@ -23,6 +24,8 @@ const job = ref<null | { label: string; done: number; total: number; cancellable
 const previews = ref<Record<number, string>>({});
 const lastExport = ref<ExportRecord | null>(null);
 const playing = ref(false);
+const quality = ref<MaskQuality | null>(null);
+const disk = ref<DiskUsage | null>(null);
 
 const m = computed(() => pv.value.manifest);
 const probe = computed(() => m.value.source.probe);
@@ -48,8 +51,25 @@ const maskUrl = computed(() => {
 const backgroundUrl = computed(() => (pv.value.background_path ? fileUrl(pv.value.background_path) : null));
 
 function apply(v: ProjectView) {
+  const maskChanged = v.mask_dir !== pv.value.mask_dir;
   pv.value = v;
   if (frame.value >= frames.value) frame.value = Math.max(0, frames.value - 1);
+  if (maskChanged) refreshQuality();
+}
+
+async function refreshQuality() {
+  quality.value = pv.value.mask_dir ? await api.maskQuality().catch(() => null) : null;
+}
+
+// Qualité par image pour la bande sous la timeline : 0 = sain, 1 = signalée.
+const flaggedByFrame = computed(() => new Map((quality.value?.flagged ?? []).map((f) => [f.frame, f])));
+const currentFlag = computed(() => flaggedByFrame.value.get(frame.value) ?? null);
+const flaggedList = computed(() => quality.value?.flagged ?? []);
+function nextFlag(dir: 1 | -1) {
+  const list = flaggedList.value.map((f) => f.frame);
+  if (!list.length) return;
+  const next = dir > 0 ? list.find((f) => f > frame.value) ?? list[0] : [...list].reverse().find((f) => f < frame.value) ?? list[list.length - 1];
+  frame.value = next;
 }
 
 async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
@@ -118,7 +138,10 @@ async function preview() {
 async function propagate() {
   job.value = { label: "Propagation du masque", done: 0, total: frames.value, cancellable: true };
   const r = await run(() => api.propagateMask());
-  if (r) { apply(r); previews.value = {}; }
+  if (r) { apply(r); previews.value = {}; await refreshQuality(); }
+  else if (error.value?.includes("annulée")) {
+    error.value = "Propagation annulée. Relancez-la avec les mêmes images clés : elle reprendra au bloc où elle s'est arrêtée.";
+  }
   job.value = null;
 }
 
@@ -147,8 +170,40 @@ watch(composite, (c) => {
 }, { deep: true });
 
 function resetLook() {
-  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1 };
+  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0 };
 }
+
+async function toggleCleanup(ev: Event) {
+  const r = await run(() => api.setCleanup((ev.target as HTMLInputElement).checked));
+  if (r) apply(r);
+}
+
+async function autoHarmonize() {
+  if (!frameUrl.value || !maskUrl.value) return;
+  await run(async () => {
+    const [f, mk, bg] = await Promise.all([
+      loadImage(frameUrl.value!), loadImage(maskUrl.value!),
+      backgroundUrl.value ? loadImage(backgroundUrl.value) : Promise.resolve(null),
+    ]);
+    composite.value = { ...composite.value, ...harmonize(f, mk, bg, composite.value) };
+  });
+  mode.value = "split";
+}
+
+async function setQuality(q: ExportQuality) {
+  const r = await run(() => api.setExportQuality(q));
+  if (r) apply(r);
+}
+
+async function refreshDisk() {
+  disk.value = (await run(() => api.diskUsage())) ?? null;
+}
+
+async function cleanCache() {
+  disk.value = (await run(() => api.cleanCache())) ?? disk.value;
+}
+
+watch(step, (s) => { if (s === "export") refreshDisk(); });
 
 // --- Export ----------------------------------------------------------------------
 async function exportVideo() {
@@ -171,13 +226,28 @@ async function cancel() {
 }
 
 // --- Lecture ---------------------------------------------------------------------
-let playTimer: number | undefined;
+// Lecture cadencée sur l'horloge (pas sur un minuteur) et préchargement des images à venir :
+// si le rendu prend du retard, on saute des images plutôt que de ralentir.
+let playRaf = 0;
+function urlsFor(i: number) {
+  const out = [];
+  if (pv.value.proxy_dir) out.push(fileUrl(`${pv.value.proxy_dir}/${frameName(i)}.jpg`));
+  if (pv.value.mask_dir) out.push(fileUrl(`${pv.value.mask_dir}/${frameName(i)}.png`));
+  return out;
+}
 function togglePlay() {
   playing.value = !playing.value;
-  window.clearInterval(playTimer);
-  if (playing.value) {
-    playTimer = window.setInterval(() => { frame.value = (frame.value + 1) % Math.max(frames.value, 1); }, 1000 / fps.value);
-  }
+  cancelAnimationFrame(playRaf);
+  if (!playing.value || !frames.value) return;
+  const start = performance.now(), from = frame.value, n = frames.value;
+  let preloaded = from;
+  const tick = (now: number) => {
+    const i = (from + Math.floor(((now - start) / 1000) * fps.value)) % n;
+    if (i !== frame.value) frame.value = i;
+    while (preloaded < from + Math.floor(((now - start) / 1000) * fps.value) + 12) preload(urlsFor(++preloaded % n));
+    playRaf = requestAnimationFrame(tick);
+  };
+  playRaf = requestAnimationFrame(tick);
 }
 
 function onKey(ev: KeyboardEvent) {
@@ -186,20 +256,28 @@ function onKey(ev: KeyboardEvent) {
   else if (ev.key === "ArrowLeft") frame.value = Math.max(frame.value - 1, 0);
   else if (ev.key === " ") { ev.preventDefault(); togglePlay(); }
   else if ((ev.metaKey || ev.ctrlKey) && ev.key === "z") { ev.preventDefault(); undoPoint(); }
+  else if (ev.key === "n") nextFlag(1);
+  else if (ev.key === "p") nextFlag(-1);
 }
 
 // --- Démonstration automatique (dev uniquement, VIDEEO_DEV_DEMO=1) -----------------
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function runDemo(background: string) {
+interface DemoSpec {
+  background: string; start: number; duration: number; box: [number, number, number, number]; points: [number, number][];
+  export_quality?: ExportQuality;
+}
+async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
-  step.value = "clip"; clipDuration.value = 3; await prepareClip(); await mark("1-proxy");
-  tool.value = "box"; await onBox([420, 0, 915, 719]); await onPoint(646, 140, true); await mark("2-preview");
-  frame.value = 60; await onPoint(640, 450, true); await mark("3-keyframe");
-  await propagate(); frame.value = 30; await mark("4-propagated");
-  step.value = "background"; await api.setBackground(background).then(apply);
-  composite.value = { ...composite.value, background: m.value.composite.background, subject_scale: 0.85, subject_y: 0.08, brightness: 0.03 };
-  mode.value = "composite"; await mark("5-composite");
-  step.value = "export"; await exportVideo(); await mark("6-exported");
+  step.value = "clip"; clipStart.value = spec.start; clipDuration.value = spec.duration; await prepareClip(); await mark("1-proxy");
+  tool.value = "box"; await onBox(spec.box);
+  for (const [x, y] of spec.points) await onPoint(x, y, true);
+  await mark("2-preview");
+  await propagate(); frame.value = flaggedList.value[0]?.frame ?? Math.floor(frames.value / 2); await mark("3-quality");
+  step.value = "background"; await api.setBackground(spec.background).then(apply);
+  composite.value = { ...composite.value, background: m.value.composite.background, edge: 0.1 };
+  mode.value = "composite"; await pause(500); await autoHarmonize(); await mark("4-harmonized-split");
+  step.value = "export"; if (spec.export_quality) await setQuality(spec.export_quality);
+  await refreshDisk(); await exportVideo(); await refreshDisk(); await mark("5-exported");
   if (error.value) await api.devLog(`DEMO error ${error.value}`);
 }
 
@@ -208,15 +286,17 @@ onMounted(async () => {
   window.addEventListener("keydown", onKey);
   unlisten.push(await onMaskProgress((done, total) => { if (job.value) job.value = { ...job.value, done, total }; }));
   unlisten.push(await onExportProgress((f) => { if (job.value) job.value = { ...job.value, done: Math.round(f * 100), total: 100 }; }));
+  await refreshQuality();
   const demo = await api.devDemo();
-  if (demo) runDemo(demo).catch((e) => api.devLog(`DEMO error ${errorText(e)}`));
+  if (demo) runDemo(JSON.parse(demo) as DemoSpec).catch((e) => api.devLog(`DEMO error ${errorText(e)}`));
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKey);
-  window.clearInterval(playTimer);
+  cancelAnimationFrame(playRaf);
   unlisten.forEach((u) => u());
 });
 
+const clipFrames = computed(() => Math.max(0, Math.round(Math.min(clipDuration.value, probe.value.duration - clipStart.value) * fps.value)));
 const statusLabel = computed(() => ({ none: "aucun masque", stale: "à recalculer", ready: "prêt" })[status.value]);
 const outSize = computed(() => {
   const w = probe.value.display_width, h = probe.value.display_height;
@@ -260,6 +340,8 @@ function stepState(id: Step) {
           <button :class="{ active: mode === 'source' }" @click="mode = 'source'">Source</button>
           <button :class="{ active: mode === 'mask' }" @click="mode = 'mask'">Masque</button>
           <button :class="{ active: mode === 'composite' }" :disabled="!pv.mask_dir" @click="mode = 'composite'">Composite</button>
+          <button :class="{ active: mode === 'split' }" :disabled="!pv.mask_dir" @click="mode = 'split'" title="Faites glisser le séparateur">Avant / après</button>
+          <span v-if="currentFlag" class="flag-note" :title="currentFlag.reasons.join(' · ')">⚠ image {{ frame }} : {{ currentFlag.reasons[0] }}</span>
         </div>
         <FrameViewer
           :frame-url="frameUrl" :mask-url="maskUrl" :background-url="backgroundUrl" :mode="mode"
@@ -272,6 +354,10 @@ function stepState(id: Step) {
           <div class="track">
             <input id="frame" type="range" min="0" :max="frames - 1" v-model.number="frame" aria-label="Image courante" />
             <span v-for="p in prompts" :key="p.frame" class="kf" :style="{ left: `${(p.frame / Math.max(frames - 1, 1)) * 100}%` }" :title="`Image clé ${p.frame}`" @click="frame = p.frame"></span>
+            <div v-if="quality" class="qstrip" aria-label="Qualité du masque par image">
+              <span v-for="f in flaggedList" :key="f.frame" :style="{ left: `${(f.frame / Math.max(frames - 1, 1)) * 100}%`, opacity: Math.min(0.35 + f.score / 4, 1) }"
+                :title="`Image ${f.frame} : ${f.reasons.join(' · ')}`" @click="frame = f.frame"></span>
+            </div>
           </div>
           <span class="mono muted">{{ frame }} / {{ frames - 1 }} · {{ formatTime(m.clip.start + frame / fps) }}</span>
         </div>
@@ -283,8 +369,9 @@ function stepState(id: Step) {
           <h2>Extrait à traiter</h2>
           <p class="muted">Commencez court : quelques secondes suffisent pour régler le détourage. Le proxy est extrait en 720p à cadence constante.</p>
           <label>Début (s)<input id="clip-start" type="number" min="0" :max="probe.duration" step="0.1" v-model.number="clipStart" /></label>
-          <label>Durée (s)<input id="clip-duration" type="number" min="0.2" max="120" step="0.5" v-model.number="clipDuration" /></label>
-          <p class="mono muted">≈ {{ Math.round(Math.min(clipDuration, probe.duration - clipStart) * fps) }} images · source {{ formatTime(probe.duration) }}</p>
+          <label>Durée (s)<input id="clip-duration" type="number" min="0.2" max="300" step="0.5" v-model.number="clipDuration" /></label>
+          <p class="mono muted">≈ {{ clipFrames }} images · ≈ {{ formatBytes(clipFrames * 300e3) }} de proxy · source {{ formatTime(probe.duration) }}</p>
+          <p v-if="clipFrames > 400" class="muted small">Au-delà de 400 images, le masque est calculé par blocs : la mémoire reste bornée (~5 Go) et un calcul interrompu reprend au dernier bloc terminé.</p>
           <button class="primary" :disabled="!!job" @click="prepareClip">{{ proxy ? "Mettre à jour l'extrait" : "Préparer l'extrait" }}</button>
           <p v-if="proxy" class="muted">Proxy prêt : {{ proxy.frames }} images {{ proxy.width }}×{{ proxy.height }}. Changer l'extrait efface les images clés.</p>
         </template>
@@ -309,7 +396,26 @@ function stepState(id: Step) {
             </button>
             <span v-if="!prompts.length" class="muted">aucune</span>
           </div>
+          <label class="check"><input id="cleanup" type="checkbox" :checked="m.segmentation.cleanup" @change="toggleCleanup" /> Nettoyer le masque (îlots parasites, petits trous)</label>
           <button class="primary" :disabled="!prompts.length || !!job" @click="propagate">Propager sur les {{ frames }} images</button>
+          <div v-if="quality && status === 'ready'" class="quality">
+            <div class="qhead">
+              <strong>Contrôle qualité</strong>
+              <span class="chip" :class="quality.summary.flagged || quality.warnings?.length ? 'warn' : 'ok'">{{ quality.summary.flagged ? `${quality.summary.flagged} image(s) à vérifier` : quality.warnings?.length ? "avertissement" : "aucune anomalie" }}</span>
+            </div>
+            <p v-for="w in quality.warnings ?? []" :key="w" class="warn-note small">{{ w }}</p>
+            <p class="muted small mono">IoU moyen {{ quality.summary.iou_mean.toFixed(3) }} · min {{ quality.summary.iou_min.toFixed(2) }}<template v-if="m.segmentation.cleanup"> · {{ quality.summary.islands_removed }} îlots, {{ quality.summary.holes_filled }} trous corrigés</template></p>
+            <div v-if="flaggedList.length" class="row">
+              <button @click="nextFlag(-1)">← Précédente (p)</button>
+              <button @click="nextFlag(1)">Suivante (n) →</button>
+            </div>
+            <ul v-if="flaggedList.length" class="flags">
+              <li v-for="f in flaggedList.slice(0, 12)" :key="f.frame" :class="{ active: f.frame === frame }" @click="frame = f.frame">
+                <span class="mono">{{ f.frame }}</span> {{ f.reasons.join(" · ") }}
+              </li>
+              <li v-if="flaggedList.length > 12" class="muted">… et {{ flaggedList.length - 12 }} autres</li>
+            </ul>
+          </div>
           <dl v-if="m.segmentation.mask && status === 'ready'" class="stats">
             <dt>Calcul</dt><dd class="mono">{{ m.segmentation.mask.seconds.toFixed(1) }} s ({{ (m.segmentation.mask.frames / Math.max(m.segmentation.mask.seconds, 0.01)).toFixed(1) }} i/s)</dd>
             <dt>Images vides</dt><dd class="mono">{{ m.segmentation.mask.empty_frames }}</dd>
@@ -332,12 +438,15 @@ function stepState(id: Step) {
             <label>Position X <span class="mono">{{ composite.subject_x.toFixed(2) }}</span><input id="pos-x" type="range" min="-0.8" max="0.8" step="0.01" v-model.number="composite.subject_x" /></label>
             <label>Position Y <span class="mono">{{ composite.subject_y.toFixed(2) }}</span><input id="pos-y" type="range" min="-0.8" max="0.8" step="0.01" v-model.number="composite.subject_y" /></label>
             <label>Adoucissement du bord <span class="mono">{{ composite.feather.toFixed(1) }} px</span><input id="feather" type="range" min="0" max="8" step="0.5" v-model.number="composite.feather" /></label>
+            <label>Bord : étendre ↔ rétrécir <span class="mono">{{ composite.edge.toFixed(2) }}</span><input id="edge" type="range" min="-0.5" max="0.5" step="0.01" v-model.number="composite.edge" /></label>
           </fieldset>
           <fieldset>
             <legend>Couleur du sujet</legend>
             <label>Luminosité <span class="mono">{{ composite.brightness.toFixed(2) }}</span><input id="brightness" type="range" min="-0.3" max="0.3" step="0.01" v-model.number="composite.brightness" /></label>
             <label>Contraste <span class="mono">{{ composite.contrast.toFixed(2) }}</span><input id="contrast" type="range" min="0.6" max="1.6" step="0.01" v-model.number="composite.contrast" /></label>
             <label>Saturation <span class="mono">{{ composite.saturation.toFixed(2) }}</span><input id="saturation" type="range" min="0" max="2" step="0.01" v-model.number="composite.saturation" /></label>
+            <label>Température : froid ↔ chaud <span class="mono">{{ composite.temperature.toFixed(2) }}</span><input id="temperature" type="range" min="-0.5" max="0.5" step="0.01" v-model.number="composite.temperature" /></label>
+            <button :disabled="!pv.mask_dir" @click="autoHarmonize" title="Rapproche la lumière et les couleurs du sujet de celles du décor, sur l'image courante">Harmoniser avec le décor</button>
           </fieldset>
           <button @click="resetLook">Réinitialiser les réglages</button>
         </template>
@@ -351,7 +460,15 @@ function stepState(id: Step) {
             <dt>Audio</dt><dd class="mono">{{ probe.has_audio ? "conservé (AAC)" : "aucun dans la source" }}</dd>
             <dt>Masque</dt><dd><span class="chip" :class="status === 'ready' ? 'ok' : 'warn'">{{ statusLabel }}</span></dd>
           </dl>
+          <label>Préréglage
+            <select id="export-quality" :value="m.export_settings.quality" @change="setQuality(($event.target as HTMLSelectElement).value as ExportQuality)">
+              <option value="fast">Rapide (encodeur matériel VideoToolbox)</option>
+              <option value="balanced">Équilibré (x264 medium, CRF 18)</option>
+              <option value="high">Qualité (x264 slow, CRF 16)</option>
+            </select>
+          </label>
           <p class="muted">Le rendu repart de la vidéo source à pleine résolution ; le masque calculé sur le proxy est mis à l'échelle.</p>
+          <p v-if="m.segmentation.mask?.flagged" class="warn-note">{{ m.segmentation.mask.flagged }} image(s) du masque sont signalées : vérifiez-les dans l'étape Sujet avant d'exporter.</p>
           <button class="primary" :disabled="status !== 'ready' || !!job || pv.source_missing" @click="exportVideo">Exporter</button>
           <div v-if="lastExport" class="done">Export terminé en {{ lastExport.seconds.toFixed(1) }} s ({{ (lastExport.size_bytes / 1e6).toFixed(1) }} Mo).</div>
           <h3 v-if="m.exports.length">Exports du projet</h3>
@@ -362,6 +479,15 @@ function stepState(id: Step) {
               <button @click="reveal(e.path)">Afficher dans le Finder</button>
             </li>
           </ul>
+          <h3>Espace disque du projet</h3>
+          <dl v-if="disk" class="stats">
+            <dt>Proxy</dt><dd class="mono">{{ formatBytes(disk.proxy_current) }}<span v-if="disk.proxy_stale" class="muted"> + {{ formatBytes(disk.proxy_stale) }} périmés</span></dd>
+            <dt>Masques</dt><dd class="mono">{{ formatBytes(disk.masks_current) }}<span v-if="disk.masks_stale" class="muted"> + {{ formatBytes(disk.masks_stale) }} périmés</span></dd>
+            <dt>Aperçus</dt><dd class="mono">{{ formatBytes(disk.previews) }}</dd>
+            <dt>Décors</dt><dd class="mono">{{ formatBytes(disk.assets) }}</dd>
+            <dt>Exports</dt><dd class="mono">{{ formatBytes(disk.exports) }}</dd>
+          </dl>
+          <button :disabled="!!job || !disk || !(disk.proxy_stale + disk.masks_stale + disk.previews)" @click="cleanCache">Nettoyer le cache périmé</button>
         </template>
 
         <div v-if="job" class="job">
@@ -388,6 +514,16 @@ function stepState(id: Step) {
 .modes { display: flex; gap: 6px; }
 .timeline { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; }
 .track { position: relative; }
+.qstrip { position: absolute; left: 0; right: 0; bottom: -9px; height: 5px; }
+.qstrip span { position: absolute; width: 3px; height: 5px; margin-left: -1px; background: var(--warn); cursor: pointer; }
+.flag-note { margin-left: auto; align-self: center; color: var(--warn); font-size: 12px; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.check { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+.quality { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; }
+.qhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.flags { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12px; max-height: 180px; overflow-y: auto; }
+.flags li { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.flags li:hover, .flags li.active { background: var(--panel-2); }
+.warn-note { color: var(--warn); }
 .kf { position: absolute; top: -6px; width: 8px; height: 8px; margin-left: -4px; background: #ffd23f; transform: rotate(45deg); cursor: pointer; }
 .panel { border-left: 1px solid var(--line); background: var(--panel); padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 .panel h2 { font-size: 15px; display: flex; gap: 8px; align-items: center; }

@@ -4,7 +4,7 @@ import { onMounted, ref, watch } from "vue";
 import type { Composite, Prompt } from "../api";
 import { drawComposite, loadImage } from "../compositor";
 
-export type ViewMode = "source" | "mask" | "composite";
+export type ViewMode = "source" | "mask" | "composite" | "split";
 export type Tool = "positive" | "negative" | "box";
 
 const props = defineProps<{
@@ -26,6 +26,10 @@ const emit = defineEmits<{
 const canvas = ref<HTMLCanvasElement | null>(null);
 const missing = ref<string | null>(null);
 const drag = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+// Vue avant/après : position du séparateur (fraction de la largeur), déplacée à la souris.
+const split = ref(0.5);
+const splitting = ref(false);
+const isComposite = () => props.mode === "composite" || props.mode === "split";
 const tint = document.createElement("canvas");
 let token = 0;
 
@@ -36,15 +40,29 @@ async function render() {
   try {
     const frame = await loadImage(props.frameUrl);
     const mask = props.maskUrl && props.mode !== "source" ? await loadImage(props.maskUrl).catch(() => null) : null;
-    const bg = props.mode === "composite" && props.backgroundUrl ? await loadImage(props.backgroundUrl).catch(() => null) : null;
+    const bg = isComposite() && props.backgroundUrl ? await loadImage(props.backgroundUrl).catch(() => null) : null;
     if (my !== token) return; // un rendu plus récent a été demandé
     const ctx = cv.getContext("2d")!;
     const { width: w, height: h } = cv;
     ctx.clearRect(0, 0, w, h);
     missing.value = null;
-    if (props.mode === "composite") {
+    if (isComposite()) {
       if (!mask) { missing.value = "Pas de masque pour cette image : propagez le masque."; ctx.drawImage(frame, 0, 0, w, h); }
       else drawComposite(ctx, w, h, frame, mask, bg, props.composite);
+      if (props.mode === "split") {
+        // À gauche du séparateur : la source d'origine.
+        const x = Math.round(split.value * w);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(0, 0, x, h); ctx.clip();
+        ctx.drawImage(frame, 0, 0, w, h);
+        ctx.restore();
+        ctx.fillStyle = "#fff"; ctx.fillRect(x - 1, 0, 2, h);
+        ctx.font = `${Math.round(h / 36)}px -apple-system, sans-serif`;
+        ctx.fillStyle = "rgba(0,0,0,.55)";
+        ctx.fillRect(x - 96, 12, 84, h / 24); ctx.fillRect(x + 12, 12, 84, h / 24);
+        ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("avant", x - 54, 12 + h / 48); ctx.fillText("après", x + 54, 12 + h / 48);
+      }
     } else {
       ctx.drawImage(frame, 0, 0, w, h);
       if (mask) {
@@ -71,7 +89,7 @@ async function render() {
 }
 
 function drawPrompt(ctx: CanvasRenderingContext2D) {
-  if (props.mode === "composite") return;
+  if (isComposite()) return;
   const s = props.width / 1280 + 0.6;
   const b = props.prompt?.box;
   const live = drag.value;
@@ -110,7 +128,8 @@ function toImage(ev: MouseEvent): [number, number] {
 }
 
 function onDown(ev: MouseEvent) {
-  if (!props.tool || props.mode === "composite") return;
+  if (props.mode === "split") { splitting.value = true; onMove(ev); return; }
+  if (!props.tool || isComposite()) return;
   const [x, y] = toImage(ev);
   if (props.tool === "box") {
     drag.value = { x0: x, y0: y, x1: x, y1: y };
@@ -122,6 +141,11 @@ function onDown(ev: MouseEvent) {
 }
 
 function onMove(ev: MouseEvent) {
+  if (splitting.value) {
+    split.value = toImage(ev)[0] / canvas.value!.width;
+    render();
+    return;
+  }
   if (!drag.value) return;
   const [x, y] = toImage(ev);
   drag.value = { ...drag.value, x1: x, y1: y };
@@ -129,6 +153,7 @@ function onMove(ev: MouseEvent) {
 }
 
 function onUp() {
+  splitting.value = false;
   const d = drag.value;
   drag.value = null;
   if (!d) return;
@@ -145,7 +170,7 @@ onMounted(render);
 </script>
 
 <template>
-  <div class="viewer" :class="{ armed: tool && mode !== 'composite' }">
+  <div class="viewer" :class="{ armed: tool && (mode === 'mask' || mode === 'source'), splitter: mode === 'split' }">
     <canvas
       v-if="frameUrl"
       ref="canvas"
@@ -166,6 +191,7 @@ onMounted(render);
 .viewer { position: relative; display: grid; place-items: center; min-height: 0; height: 100%; }
 canvas { max-width: 100%; max-height: 100%; background: #000; box-shadow: 0 0 0 1px var(--line); }
 .armed canvas { cursor: crosshair; }
+.splitter canvas { cursor: ew-resize; }
 .empty { color: var(--muted); }
 .missing { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 10px;
   background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--warn); }

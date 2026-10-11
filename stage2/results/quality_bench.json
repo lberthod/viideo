@@ -1,0 +1,161 @@
+[
+  {
+    "clip": "A_presenter",
+    "case": 1,
+    "frames": 125,
+    "raw": {
+      "seconds": 21.1,
+      "fps": 6.13,
+      "frames": 125,
+      "empty_frames": 0,
+      "iou_mean": 0.9931,
+      "iou_min": 0.9723,
+      "flagged": 0,
+      "islands_removed": 0,
+      "holes_filled": 0,
+      "warnings": [
+        "Un morceau séparé du sujet principal persiste sur 125 images sur 125 (≈ 5.7 % du masque) : un objet voisin est probablement inclus. Ajoutez un point « Exclure » dessus puis propagez à nouveau."
+      ],
+      "flagged_frames": []
+    },
+    "clean": {
+      "seconds": 23.2,
+      "fps": 5.57,
+      "frames": 125,
+      "empty_frames": 0,
+      "iou_mean": 0.9931,
+      "iou_min": 0.9723,
+      "flagged": 0,
+      "islands_removed": 6,
+      "holes_filled": 2,
+      "warnings": [
+        "Un morceau séparé du sujet principal persiste sur 125 images sur 125 (≈ 5.7 % du masque) : un objet voisin est probablement inclus. Ajoutez un point « Exclure » dessus puis propagez à nouveau."
+      ],
+      "flagged_frames": []
+    }
+  },
+  {
+    "clip": "B_office_gestures",
+    "case": 2,
+    "frames": 125,
+    "raw": {
+      "seconds": 23.4,
+      "fps": 5.5,
+      "frames": 125,
+      "empty_frames": 0,
+      "iou_mean": 0.9849,
+      "iou_min": 0.946,
+      "flagged": 0,
+      "islands_removed": 0,
+      "holes_filled": 0,
+      "warnings": [],
+      "flagged_frames": []
+    },
+    "clean": {
+      "seconds": 23.3,
+      "fps": 5.49,
+      "frames": 125,
+      "empty_frames": 0,
+      "iou_mean": 0.9851,
+      "iou_min": 0.946,
+      "flagged": 0,
+      "islands_removed": 17,
+      "holes_filled": 27,
+      "warnings": [],
+      "flagged_frames": []
+    }
+  },
+  {
+    "clip": "C_walking_occlusion",
+    "case": 2,
+    "frames": 120,
+    "raw": {
+      "seconds": 22.4,
+      "fps": 5.48,
+      "frames": 120,
+      "empty_frames": 0,
+      "iou_mean": 0.9288,
+      "iou_min": 0.8369,
+      "flagged": 0,
+      "islands_removed": 0,
+      "holes_filled": 0,
+      "warnings": [],
+      "flagged_frames": []
+    },
+    "clean": {
+      "seconds": 22.9,
+      "fps": 5.38,
+      "frames": 120,
+      "empty_frames": 0,
+      "iou_mean": 0.9318,
+      "iou_min": 0.8369,
+      "flagged": 0,
+      "islands_removed": 11,
+      "holes_filled": 72,
+      "warnings": [],
+      "flagged_frames": []
+    }
+  },
+  {
+    "clip": "D_long_hair",
+    "case": 3,
+    "frames": 150,
+    "raw": {
+      "seconds": 28.4,
+      "fps": 5.45,
+      "frames": 150,
+      "empty_frames": 0,
+      "iou_mean": 0.9571,
+      "iou_min": 0.7989,
+      "flagged": 0,
+      "islands_removed": 0,
+      "holes_filled": 0,
+      "warnings": [],
+      "flagged_frames": []
+    },
+    "clean": {
+      "seconds": 28.8,
+      "fps": 5.38,
+      "frames": 150,
+      "empty_frames": 0,
+      "iou_mean": 0.9571,
+      "iou_min": 0.799,
+      "flagged": 0,
+      "islands_removed": 265,
+      "holes_filled": 584,
+      "warnings": [],
+      "flagged_frames": []
+    }
+  },
+  {
+    "clip": "E_selfie_handheld",
+    "case": 4,
+    "frames": 120,
+    "raw": {
+      "seconds": 23.1,
+      "fps": 5.36,
+      "frames": 120,
+      "empty_frames": 0,
+      "iou_mean": 0.9731,
+      "iou_min": 0.9407,
+      "flagged": 0,
+      "islands_removed": 0,
+      "holes_filled": 0,
+      "warnings": [],
+      "flagged_frames": []
+    },
+    "clean": {
+      "seconds": 23.0,
+      "fps": 5.39,
+      "frames": 120,
+      "empty_frames": 0,
+      "iou_mean": 0.9738,
+      "iou_min": 0.9428,
+      "flagged": 0,
+      "islands_removed": 17,
+      "holes_filled": 238,
+      "warnings": [],
+      "flagged_frames": []
+    }
+  }
+]

@@ -25,8 +25,6 @@ pub struct Worker {
     pending: Pending,
     next_id: AtomicU64,
     pub root: PathBuf,
-    /// Clé du proxy actuellement chargé par `init_video`, pour éviter de le recharger.
-    pub loaded_video: Mutex<Option<String>>,
 }
 
 impl Worker {
@@ -92,7 +90,6 @@ impl Worker {
             pending,
             next_id: AtomicU64::new(1),
             root: root.to_path_buf(),
-            loaded_video: Mutex::new(None),
         }))
     }
 

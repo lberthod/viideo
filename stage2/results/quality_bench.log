@@ -1,0 +1,5 @@
+A_presenter             125 img | brut:   0 signalées, iou 0.993/0.97 | nettoyé:   0 signalées, 1 avert., 6 îlots, 2 trous, 3.69 i/s
+B_office_gestures       125 img | brut:   0 signalées, iou 0.985/0.95 | nettoyé:   0 signalées, 0 avert., 17 îlots, 27 trous, 3.37 i/s
+C_walking_occlusion     120 img | brut:   0 signalées, iou 0.929/0.84 | nettoyé:   0 signalées, 0 avert., 11 îlots, 72 trous, 2.61 i/s
+D_long_hair             150 img | brut:   0 signalées, iou 0.957/0.80 | nettoyé:   0 signalées, 0 avert., 265 îlots, 584 trous, 2.7 i/s
+E_selfie_handheld       120 img | brut:   0 signalées, iou 0.973/0.94 | nettoyé:   0 signalées, 0 avert., 17 îlots, 238 trous, 4.56 i/s

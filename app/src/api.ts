@@ -16,6 +16,26 @@ export interface Composite {
   background: string | null; background_color: string;
   subject_scale: number; subject_x: number; subject_y: number;
   feather: number; brightness: number; contrast: number; saturation: number;
+  edge: number; temperature: number;
+}
+
+export type ExportQuality = "fast" | "balanced" | "high";
+
+export interface FrameQuality {
+  frame: number; area_pct: number; components: number; iou_prev: number; cx: number; cy: number;
+  islands_removed: number; holes_filled: number;
+}
+export interface FlaggedFrame { frame: number; score: number; reasons: string[] }
+export interface MaskQuality {
+  summary: { frames: number; empty_frames: number; iou_mean: number; iou_min: number; flagged: number; islands_removed: number; holes_filled: number; warnings?: number };
+  warnings?: string[];
+  flagged: FlaggedFrame[];
+  frames: FrameQuality[];
+}
+
+export interface DiskUsage {
+  proxy_current: number; proxy_stale: number; masks_current: number; masks_stale: number;
+  previews: number; assets: number; exports: number;
 }
 
 export interface ExportRecord { path: string; created_at: string; seconds: number; width: number; height: number; size_bytes: number }
@@ -26,11 +46,12 @@ export interface Manifest {
   clip: { start: number; duration: number };
   proxy: { key: string; dir: string; width: number; height: number; frames: number; fps_num: number; fps_den: number } | null;
   segmentation: {
-    model: string; dtype: string; prompts: Prompt[]; status: "none" | "stale" | "ready";
-    mask: { key: string; dir: string; frames: number; seconds: number; empty_frames: number } | null;
+    model: string; dtype: string; prompts: Prompt[]; status: "none" | "stale" | "ready"; cleanup: boolean;
+    mask: { key: string; dir: string; frames: number; seconds: number; empty_frames: number; flagged: number } | null;
   };
   composite: Composite;
   exports: ExportRecord[];
+  export_settings: { quality: ExportQuality };
 }
 
 export interface ProjectView {
@@ -60,6 +81,11 @@ export const api = {
   setComposite: (composite: Composite) => invoke<ProjectView>("set_composite", { composite }),
   exportVideo: () => invoke<ExportRecord>("export_video"),
   projectPath: (rel: string) => invoke<string>("project_path", { rel }),
+  maskQuality: () => invoke<MaskQuality | null>("mask_quality"),
+  setCleanup: (enabled: boolean) => invoke<ProjectView>("set_cleanup", { enabled }),
+  setExportQuality: (quality: ExportQuality) => invoke<ProjectView>("set_export_quality", { quality }),
+  diskUsage: () => invoke<DiskUsage>("disk_usage"),
+  cleanCache: () => invoke<DiskUsage>("clean_cache"),
 };
 
 export function onMaskProgress(cb: (done: number, total: number) => void): Promise<UnlistenFn> {
@@ -81,4 +107,10 @@ export function formatTime(s: number): string {
   const m = Math.floor(s / 60);
   const sec = s - m * 60;
   return `${m}:${sec.toFixed(2).padStart(5, "0")}`;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1e6) return `${(n / 1e3).toFixed(0)} Ko`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(1)} Mo`;
+  return `${(n / 1e9).toFixed(2)} Go`;
 }

@@ -21,12 +21,12 @@ use sha2::{Digest, Sha256};
 use crate::error::{err, Result};
 use crate::media::Probe;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 pub const MANIFEST: &str = "project.json";
 const SUBDIRS: [&str; 5] = ["media", "assets", "cache", "exports", "logs"];
 
 /// Bornes de validation des réglages : tout paramètre hors bornes est refusé.
-pub const MAX_CLIP_SECONDS: f64 = 120.0;
+pub const MAX_CLIP_SECONDS: f64 = 300.0;
 pub const PROXY_HEIGHT: u32 = 720;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +42,23 @@ pub struct Manifest {
     pub composite: Composite,
     #[serde(default)]
     pub exports: Vec<ExportRecord>,
+    #[serde(default)]
+    pub export_settings: ExportSettings,
+}
+
+/// Préréglage d'export : rapide (veryfast), équilibré (medium), qualité (slow).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportQuality {
+    Fast,
+    #[default]
+    Balanced,
+    High,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ExportSettings {
+    pub quality: ExportQuality,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +121,9 @@ pub struct Mask {
     pub frames: u32,
     pub seconds: f64,
     pub empty_frames: u32,
+    /// Images signalées par la détection de dérive (détail dans `<dir>/quality.json`).
+    #[serde(default)]
+    pub flagged: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +133,13 @@ pub struct Segmentation {
     pub prompts: Vec<Prompt>,
     pub status: MaskStatus,
     pub mask: Option<Mask>,
+    /// Nettoyage des îlots parasites et des petits trous à la propagation.
+    #[serde(default = "default_true")]
+    pub cleanup: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,6 +157,12 @@ pub struct Composite {
     pub brightness: f64,
     pub contrast: f64,
     pub saturation: f64,
+    /// Bord du masque : > 0 rétrécit, < 0 étend (-0,5 à 0,5).
+    #[serde(default)]
+    pub edge: f64,
+    /// Température de couleur du sujet : > 0 plus chaud, < 0 plus froid (-0,5 à 0,5).
+    #[serde(default)]
+    pub temperature: f64,
 }
 
 impl Default for Composite {
@@ -144,6 +177,8 @@ impl Default for Composite {
             brightness: 0.0,
             contrast: 1.0,
             saturation: 1.0,
+            edge: 0.0,
+            temperature: 0.0,
         }
     }
 }
@@ -158,6 +193,8 @@ impl Composite {
             ("luminosité", self.brightness, -0.5, 0.5),
             ("contraste", self.contrast, 0.5, 2.0),
             ("saturation", self.saturation, 0.0, 2.0),
+            ("bord", self.edge, -0.5, 0.5),
+            ("température", self.temperature, -0.5, 0.5),
         ];
         for (name, v, lo, hi) in checks {
             if !v.is_finite() || v < lo || v > hi {
@@ -244,9 +281,10 @@ impl Project {
             source: Source { path: source.display().to_string(), fingerprint: fingerprint(source)?, probe },
             clip: Clip { start: 0.0, duration },
             proxy: None,
-            segmentation: Segmentation { model: "tiny".into(), dtype: "bf16".into(), prompts: vec![], status: MaskStatus::None, mask: None },
+            segmentation: Segmentation { model: "tiny".into(), dtype: "bf16".into(), prompts: vec![], status: MaskStatus::None, mask: None, cleanup: true },
             composite: Composite::default(),
             exports: vec![],
+            export_settings: ExportSettings::default(),
         };
         let p = Project { dir, manifest };
         p.save()?;
@@ -305,7 +343,8 @@ impl Project {
         let m = &self.manifest;
         let proxy = m.proxy.as_ref().map(|p| p.key.clone()).unwrap_or_default();
         let prompts = serde_json::to_string(&m.segmentation.prompts)?;
-        Ok(sha256_hex(&[b"mask-v1", proxy.as_bytes(), m.segmentation.model.as_bytes(), m.segmentation.dtype.as_bytes(), prompts.as_bytes()]))
+        let cleanup: &[u8] = if m.segmentation.cleanup { b"cleanup-v1" } else { b"raw" };
+        Ok(sha256_hex(&[b"mask-v2", proxy.as_bytes(), m.segmentation.model.as_bytes(), m.segmentation.dtype.as_bytes(), prompts.as_bytes(), cleanup]))
     }
 
     /// Recalcule le statut du masque après un changement de clip ou d'invites.
@@ -347,13 +386,30 @@ impl Project {
     }
 }
 
-/// Migrations de schéma : chaque version future ajoute une étape testée ici.
-fn migrate(value: serde_json::Value, from: u32) -> Result<serde_json::Value> {
-    match from {
-        SCHEMA_VERSION => Ok(value),
-        0 => err("Manifeste sans version de schéma : format non reconnu."),
-        v => err(format!("Aucune migration connue depuis le schéma {v}.")),
+/// Migrations de schéma, appliquées pas à pas jusqu'à la version courante.
+fn migrate(mut value: serde_json::Value, from: u32) -> Result<serde_json::Value> {
+    let mut v = from;
+    while v < SCHEMA_VERSION {
+        match v {
+            0 => return err("Manifeste sans version de schéma : format non reconnu."),
+            // 1 -> 2 : nettoyage du masque (activé), bord, température, préréglage d'export.
+            // La clé de masque change de formule : un masque v1 devient « à recalculer ».
+            1 => {
+                let seg = &mut value["segmentation"];
+                seg["cleanup"] = serde_json::Value::Bool(true);
+                if let Some(mask) = seg.get_mut("mask").filter(|m| m.is_object()) {
+                    mask["flagged"] = 0.into();
+                }
+                value["composite"]["edge"] = 0.0.into();
+                value["composite"]["temperature"] = 0.0.into();
+                value["export_settings"] = serde_json::json!({"quality": "balanced"});
+            }
+            _ => return err(format!("Aucune migration connue depuis le schéma {v}.")),
+        }
+        v += 1;
+        value["schema_version"] = v.into();
     }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -390,6 +446,28 @@ mod tests {
         let q = Project::open(&dir).unwrap();
         assert_eq!(q.manifest.segmentation.prompts.len(), 1);
         assert!(Project::create(&dir, &src, probe()).is_err(), "pas d'écrasement d'un projet existant");
+    }
+
+    #[test]
+    fn migrates_v1_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("clip.mp4");
+        fs::write(&src, b"fake video").unwrap();
+        let dir = tmp.path().join("proj");
+        let p = Project::create(&dir, &src, probe()).unwrap();
+        // Fabrique un manifeste v1 : sans les champs ajoutés en v2.
+        let mut v = serde_json::to_value(&p.manifest).unwrap();
+        v["schema_version"] = 1.into();
+        v["segmentation"].as_object_mut().unwrap().remove("cleanup");
+        v["composite"].as_object_mut().unwrap().remove("edge");
+        v["composite"].as_object_mut().unwrap().remove("temperature");
+        v.as_object_mut().unwrap().remove("export_settings");
+        fs::write(dir.join(MANIFEST), serde_json::to_vec(&v).unwrap()).unwrap();
+        let q = Project::open(&dir).unwrap();
+        assert_eq!(q.manifest.schema_version, SCHEMA_VERSION);
+        assert!(q.manifest.segmentation.cleanup);
+        assert_eq!(q.manifest.composite.edge, 0.0);
+        assert_eq!(q.manifest.export_settings.quality, ExportQuality::Balanced);
     }
 
     #[test]

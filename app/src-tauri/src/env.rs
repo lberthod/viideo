@@ -39,13 +39,20 @@ pub struct Tools {
     pub python: PathBuf,
     pub worker: PathBuf,
     pub models: PathBuf,
+    /// Encodeur matériel H.264 disponible dans ce FFmpeg.
+    pub videotoolbox: bool,
 }
 
 impl Tools {
     pub fn detect() -> Self {
         let root = repo_root();
+        let ffmpeg = find_binary("ffmpeg", "VIDEEO_FFMPEG");
+        let videotoolbox = Command::new(&ffmpeg).args(["-hide_banner", "-encoders"]).output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("h264_videotoolbox"))
+            .unwrap_or(false);
         Tools {
-            ffmpeg: find_binary("ffmpeg", "VIDEEO_FFMPEG"),
+            videotoolbox,
+            ffmpeg,
             ffprobe: find_binary("ffprobe", "VIDEEO_FFPROBE"),
             python: from_env_or("VIDEEO_PYTHON", root.join(".venvs/vision/bin/python")),
             worker: from_env_or("VIDEEO_WORKER", root.join("workers/vision/worker.py")),
