@@ -1,0 +1,79 @@
+//! Test de bout en bout du pipeline sans interface (lancé explicitement, il charge SAM 2) :
+//!   VIDEEO_E2E_CLIP=/chemin/clip.mp4 cargo test e2e -- --ignored --nocapture
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use serde_json::json;
+
+use crate::env::Tools;
+use crate::media::{self, ExportJob};
+use crate::project::{Composite, Mask, MaskStatus, Point, Project, Prompt, Proxy};
+use crate::worker::Worker;
+
+#[test]
+#[ignore]
+fn full_pipeline() {
+    let clip = PathBuf::from(std::env::var("VIDEEO_E2E_CLIP").expect("VIDEEO_E2E_CLIP"));
+    let tools = Tools::detect();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("projet");
+
+    let probe = media::probe(&tools.ffprobe, &clip).unwrap();
+    let mut p = Project::create(&dir, &clip.canonicalize().unwrap(), probe.clone()).unwrap();
+    p.manifest.clip.duration = 3.0;
+    let key = p.proxy_key();
+    let rel = format!("media/proxy_{}", &key[..16]);
+    let fps = (probe.fps_num, probe.fps_den);
+    let r = media::extract_proxy(&tools.ffmpeg, &tools.ffprobe, &clip, 0.0, 3.0, fps, &p.resolve(&rel).unwrap()).unwrap();
+    println!("proxy {}x{} {} images", r.width, r.height, r.frames);
+    p.manifest.proxy = Some(Proxy { key, dir: rel.clone(), width: r.width, height: r.height, frames: r.frames, fps_num: fps.0, fps_den: fps.1 });
+
+    // Invites du clip A de l'étape 0 (présentatrice) mises à l'échelle du proxy, plus une correction à mi-parcours.
+    let sx = r.width as f64 / 1280.0;
+    let prompts = vec![
+        Prompt { frame: 0, points: vec![Point { x: 700.0 * sx, y: 180.0, positive: true }], r#box: Some([440.0 * sx, 60.0, 910.0 * sx, 719.0]) },
+        Prompt { frame: r.frames / 2, points: vec![Point { x: 700.0 * sx, y: 340.0, positive: true }], r#box: None },
+    ];
+    p.validate_prompts(&prompts).unwrap();
+    p.manifest.segmentation.prompts = prompts.clone();
+
+    let progress = Arc::new(Mutex::new(0u64));
+    let pr = progress.clone();
+    let w = Worker::spawn(&tools, &p.dir, move |ev| { *pr.lock().unwrap() = ev["done"].as_u64().unwrap_or(0); }).unwrap();
+    println!("{}", w.request("ping", json!({})).unwrap());
+    w.request("load_model", json!({"model": "tiny", "dtype": "bf16"})).unwrap();
+    w.request("init_video", json!({"frames_dir": p.resolve(&rel).unwrap()})).unwrap();
+    let pv = w.request("preview", json!({"out_png": p.dir.join("cache/preview/x.png"), "prompts": [prompts[0].clone()]})).unwrap();
+    println!("aperçu {pv}");
+    // Un chemin hors du projet doit être refusé par le worker.
+    assert!(w.request("preview", json!({"out_png": "/tmp/evil.png", "prompts": [prompts[0].clone()]})).is_err());
+
+    let mask_key = p.mask_key().unwrap();
+    let mask_rel = format!("cache/masks/{}", &mask_key[..16]);
+    let res = w.request("propagate", json!({"out_dir": p.resolve(&mask_rel).unwrap(), "prompts": prompts})).unwrap();
+    println!("propagation {res}");
+    assert_eq!(res["written"].as_u64().unwrap() as u32, r.frames);
+    assert!(*progress.lock().unwrap() > 0, "événements de progression reçus");
+    p.manifest.segmentation.mask = Some(Mask { key: mask_key, dir: mask_rel.clone(), frames: r.frames, seconds: 0.0, empty_frames: 0 });
+    p.refresh_mask_status().unwrap();
+    assert_eq!(p.manifest.segmentation.status, MaskStatus::Ready);
+    w.shutdown();
+
+    let (ow, oh) = media::output_size(probe.display_width, probe.display_height);
+    let dest = p.resolve("exports/test.mp4").unwrap();
+    let job = ExportJob {
+        src: clip.clone(), start: 0.0, duration: 3.0, fps, has_audio: probe.has_audio, out_width: ow, out_height: oh,
+        proxy_height: r.height, masks_dir: p.resolve(&mask_rel).unwrap(), background: None,
+        composite: Composite { subject_scale: 0.8, subject_x: 0.1, ..Composite::default() }, dest: dest.clone(),
+    };
+    let mut last = 0.0;
+    media::export(&tools.ffmpeg, &job, Arc::new(Mutex::new(None)), |f| last = f).unwrap();
+    let out = media::probe(&tools.ffprobe, &dest).unwrap();
+    println!("export {}x{} {:.2}s {} octets", out.display_width, out.display_height, out.duration, out.size_bytes);
+    assert_eq!((out.display_width, out.display_height), (ow, oh));
+    assert!((out.duration - 3.0).abs() < 0.2);
+    assert_eq!(last, 1.0);
+    p.save().unwrap();
+    assert!(Project::open(&dir).is_ok(), "le projet se rouvre");
+}

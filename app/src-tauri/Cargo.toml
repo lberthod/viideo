@@ -1,0 +1,27 @@
+[package]
+name = "videeo"
+version = "0.1.0"
+description = "Studio local de transformation vidéo par IA"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "videeo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2.6"
+tauri-plugin-opener = "2.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"

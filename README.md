@@ -5,6 +5,12 @@ sans coût d'API par défaut. Spécification complète : [docs/brief.md](docs/br
 
 ## État
 
+**Étape 1 — MVP manuel : terminé.** App Tauri + Vue + Rust : import, extrait, sélection du sujet, masque SAM 2 propagé et corrigeable, décor, export MP4. Voir [docs/stage1/README.md](docs/stage1/README.md).
+
+```bash
+cd app && npm install && npm run tauri dev
+```
+
 **Étape 0 — preuve technique sur le Mac.** Rapport : [stage0/REPORT.md](stage0/REPORT.md) (version web : [stage0/web/index.html](stage0/web/index.html)).
 
 ## Reproduire l'étape 0
