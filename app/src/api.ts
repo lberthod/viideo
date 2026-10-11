@@ -18,6 +18,7 @@ export interface Composite {
   feather: number; brightness: number; contrast: number; saturation: number;
   edge: number; temperature: number; bg_blur: number;
   shadow: number; light_wrap: number; foreground: Foreground | null;
+  relight: number; light_x: number; light_y: number; light_color: string;
 }
 
 /** Élément de premier plan : largeur et centre X en fraction de la largeur, bas en fraction de la hauteur. */
@@ -103,7 +104,7 @@ export interface Manifest {
 export interface ProjectView {
   dir: string; manifest: Manifest; source_missing: boolean;
   proxy_dir: string | null; mask_dir: string | null; background_path: string | null;
-  shadow_dir: string | null; element_path: string | null;
+  shadow_dir: string | null; normals_dir: string | null; element_path: string | null;
 }
 
 export interface PreviewResult { frame: number; png: string; area_pct: number }
@@ -139,6 +140,7 @@ export const api = {
   imageBackends: () => invoke<ImageBackends>("image_backends"),
   setGeneration: (settings: GenerationSettings) => invoke<ProjectView>("set_generation", { settings }),
   computeShadows: () => invoke<ProjectView>("compute_shadows"),
+  computeNormals: () => invoke<ProjectView>("compute_normals"),
   listElements: () => invoke<ElementItem[]>("list_elements"),
   createElement: (prompt: string, seed: number | null) => invoke<ElementItem[]>("create_element", { prompt, seed }),
   importElement: (path: string) => invoke<ElementItem[]>("import_element", { path }),

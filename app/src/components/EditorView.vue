@@ -8,7 +8,7 @@ import {
   PLATE_SUFFIX, isVideoPath,
 } from "../api";
 import AssistantPanel, { type StepState } from "./AssistantPanel.vue";
-import { framing, harmonize, LIGHTING, loadImage, placeElement, preload, subjectBounds, videoFrameAt, type FramingPreset } from "../compositor";
+import { estimateLight, framing, harmonize, LIGHTING, loadImage, placeElement, preload, subjectBounds, videoFrameAt, type FramingPreset } from "../compositor";
 import BackgroundLibrary from "./BackgroundLibrary.vue";
 import ElementLibrary from "./ElementLibrary.vue";
 import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
@@ -53,6 +53,7 @@ const maskUrl = computed(() => {
 });
 const backgroundUrl = computed(() => (pv.value.background_path ? fileUrl(pv.value.background_path) : null));
 const shadowUrl = computed(() => (pv.value.shadow_dir && composite.value.shadow > 0.01 ? fileUrl(`${pv.value.shadow_dir}/${frameName(frame.value)}.png`) : null));
+const normalsUrl = computed(() => (pv.value.normals_dir && composite.value.relight > 0.01 ? fileUrl(`${pv.value.normals_dir}/${frameName(frame.value)}.png`) : null));
 // L'image de l'élément vient de la bibliothèque (choix local immédiat), sinon du projet.
 const elementAbs = ref<string | null>(props.initial.element_path);
 const elementUrl = computed(() => (composite.value.foreground && elementAbs.value ? fileUrl(elementAbs.value) : null));
@@ -196,6 +197,33 @@ async function setShadow(v: number) {
   mode.value = "composite";
 }
 
+// --- Relighting directionnel ------------------------------------------------------------------
+async function ensureNormals() {
+  if (pv.value.normals_dir) return true;
+  const r = await run(() => api.computeNormals());
+  if (r) pv.value = { ...pv.value, normals_dir: r.normals_dir };
+  return !!r;
+}
+
+async function setRelight(v: number) {
+  composite.value = { ...composite.value, relight: v };
+  if (v > 0.01) await ensureNormals();
+  mode.value = "composite";
+}
+
+/** Direction et couleur de la lumière lues sur le décor (image courante d'un décor animé). */
+async function lightFromBackground(strength?: number) {
+  const url = backgroundUrl.value;
+  if (!url) { error.value = "Choisissez d'abord un décor."; return; }
+  const bg = isVideoPath(url) ? await videoFrameAt(url, frame.value / Math.max(fps.value, 1)).catch(() => null)
+    : await loadImage(url).catch(() => null);
+  const est = estimateLight(bg);
+  if (!est) return;
+  const relight = strength ?? (composite.value.relight > 0.01 ? composite.value.relight : 0.5);
+  composite.value = { ...composite.value, ...est };
+  await setRelight(relight);
+}
+
 async function subjectBox() {
   const idx = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * (frames.value - 1)));
   const masks = await Promise.all(idx.map((i) => loadImage(fileUrl(`${pv.value.mask_dir}/${frameName(i)}.png`))));
@@ -243,7 +271,7 @@ watch(composite, (c) => {
 }, { deep: true });
 
 function resetLook() {
-  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0, shadow: 0, light_wrap: 0 };
+  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0, shadow: 0, light_wrap: 0, relight: 0 };
 }
 
 async function toggleCleanup(ev: Event) {
@@ -307,6 +335,7 @@ function urlsFor(i: number) {
   const out = [];
   if (pv.value.proxy_dir) out.push(fileUrl(`${pv.value.proxy_dir}/${frameName(i)}.jpg`));
   if (pv.value.mask_dir) out.push(fileUrl(`${pv.value.mask_dir}/${frameName(i)}.png`));
+  if (pv.value.normals_dir && composite.value.relight > 0.01) out.push(fileUrl(`${pv.value.normals_dir}/${frameName(i)}.png`));
   return out;
 }
 function togglePlay() {
@@ -442,6 +471,8 @@ interface DemoSpec {
   negative?: [number, number][];
   element?: { prompt: string; cover: number; seed?: number };
   shadow?: number; light_wrap?: number; harmonize?: boolean;
+  /** Relighting : force, la lumière étant lue sur le décor. */
+  relight?: number;
 }
 async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
@@ -493,6 +524,7 @@ async function runDemo(spec: DemoSpec) {
   if (spec.light_wrap) composite.value = { ...composite.value, light_wrap: spec.light_wrap };
   if (spec.lighting) applyLighting(spec.lighting);
   if (spec.harmonize || !spec.lighting) await autoHarmonize();
+  if (spec.relight) await lightFromBackground(spec.relight);
   mode.value = "composite"; await mark("4-decor");
   step.value = "export"; if (spec.export_quality) await setQuality(spec.export_quality);
   await refreshDisk(); await exportVideo(); await refreshDisk(); await mark("5-exported");
@@ -566,7 +598,7 @@ function stepState(id: Step) {
           :frame-url="frameUrl" :mask-url="maskUrl" :background-url="backgroundUrl" :mode="mode"
           :composite="composite" :prompt="currentPrompt" :tool="step === 'subject' ? tool : null"
           :width="proxy?.width ?? 1280" :height="proxy?.height ?? 720" :time="frame / fps"
-          :shadow-url="shadowUrl" :element-url="elementUrl"
+          :shadow-url="shadowUrl" :element-url="elementUrl" :normals-url="normalsUrl"
           @point="onPoint" @box="onBox"
         />
         <div v-if="frames" class="timeline">
@@ -692,6 +724,20 @@ function stepState(id: Step) {
             <label>Saturation <span class="mono">{{ composite.saturation.toFixed(2) }}</span><input id="saturation" type="range" min="0" max="2" step="0.01" v-model.number="composite.saturation" /></label>
             <label>Température : froid ↔ chaud <span class="mono">{{ composite.temperature.toFixed(2) }}</span><input id="temperature" type="range" min="-0.5" max="0.5" step="0.01" v-model.number="composite.temperature" /></label>
             <button :disabled="!pv.mask_dir" @click="autoHarmonize" title="Rapproche la lumière et les couleurs du sujet de celles du décor, sur l'image courante">Harmoniser avec le décor</button>
+          </fieldset>
+          <fieldset>
+            <legend>Relighting (lumière directionnelle)</legend>
+            <p class="muted small">Éclaire le sujet du côté d'où vient la lumière du décor, avec sa couleur. La forme du sujet est déduite du masque : effet doux, stable d'une image à l'autre.</p>
+            <button :disabled="!pv.mask_dir || !backgroundUrl" @click="lightFromBackground()">Lire la lumière du décor</button>
+            <label>Intensité <span class="mono">{{ composite.relight.toFixed(2) }}</span>
+              <input id="relight" type="range" min="0" max="1" step="0.05" :value="composite.relight" :disabled="!pv.mask_dir"
+                @change="setRelight(Number(($event.target as HTMLInputElement).value))" />
+            </label>
+            <template v-if="composite.relight > 0.01">
+              <label>Direction : gauche ↔ droite <span class="mono">{{ composite.light_x.toFixed(2) }}</span><input id="light-x" type="range" min="-1" max="1" step="0.05" v-model.number="composite.light_x" /></label>
+              <label>Hauteur : haut ↔ bas <span class="mono">{{ composite.light_y.toFixed(2) }}</span><input id="light-y" type="range" min="-1" max="1" step="0.05" v-model.number="composite.light_y" /></label>
+              <label class="row">Couleur de la lumière <input id="light-color" type="color" v-model="composite.light_color" /></label>
+            </template>
           </fieldset>
           <button @click="resetLook">Réinitialiser les réglages</button>
         </template>

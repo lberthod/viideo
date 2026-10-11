@@ -84,6 +84,8 @@ pub struct ProjectView {
     pub background_path: Option<String>,
     /// Ombres de contact calculées pour le masque courant.
     pub shadow_dir: Option<String>,
+    /// Normales approchées du sujet (relighting), calculées pour le masque courant.
+    pub normals_dir: Option<String>,
     pub element_path: Option<String>,
 }
 
@@ -91,6 +93,11 @@ pub struct ProjectView {
 fn shadow_rel(p: &Project) -> Option<String> {
     let seg = &p.manifest.segmentation;
     seg.mask.as_ref().filter(|_| seg.status == MaskStatus::Ready).map(|m| format!("cache/shadows/{}", &m.key[..16]))
+}
+
+/// Dossier des normales du sujet : même principe que les ombres.
+fn normals_rel(p: &Project) -> Option<String> {
+    shadow_rel(p).map(|r| r.replace("cache/shadows/", "cache/normals/"))
 }
 
 fn view(p: &Project) -> ProjectView {
@@ -104,6 +111,7 @@ fn view(p: &Project) -> ProjectView {
         mask_dir: m.segmentation.mask.as_ref().filter(|_| m.segmentation.status == MaskStatus::Ready).and_then(|x| abs(&x.dir)),
         background_path: m.composite.background.as_deref().and_then(abs),
         shadow_dir: shadow_rel(p).and_then(|r| abs(&r)),
+        normals_dir: normals_rel(p).and_then(|r| abs(&r)),
         element_path: m.composite.foreground.as_ref().and_then(|f| abs(&f.path)),
     }
 }
@@ -641,6 +649,7 @@ pub async fn export_video(app: AppHandle, state: State<'_, AppState>) -> Result<
             videotoolbox: state.tools.videotoolbox,
             shadows_dir: shadow_rel(p).map(|r| p.resolve(&r)).transpose()?.filter(|d| d.exists()),
             element: m.composite.foreground.as_ref().map(|f| p.resolve(&f.path)).transpose()?.filter(|e| e.exists()),
+            normals_dir: normals_rel(p).map(|r| p.resolve(&r)).transpose()?.filter(|d| d.exists()),
             dest: p.resolve(&rel)?,
         }, rel))
     })?;
@@ -745,7 +754,8 @@ pub fn disk_usage(state: State<'_, AppState>) -> Result<DiskUsage> {
     with_project(&state, |p| Ok(disk_usage_of(p)))
 }
 
-/// Supprime les caches régénérables qui ne servent plus (anciens proxies, anciens masques, aperçus).
+/// Supprime les caches régénérables qui ne servent plus (anciens proxies, masques, ombres et
+/// normales d'un ancien masque, aperçus).
 /// Les médias sources, décors importés et exports ne sont jamais touchés.
 #[tauri::command]
 pub fn clean_cache(state: State<'_, AppState>) -> Result<DiskUsage> {
@@ -754,9 +764,11 @@ pub fn clean_cache(state: State<'_, AppState>) -> Result<DiskUsage> {
     }
     with_project(&state, |p| {
         let keep: Vec<PathBuf> = [p.manifest.proxy.as_ref().map(|x| p.dir.join(&x.dir)),
-                                  p.manifest.segmentation.mask.as_ref().map(|x| p.dir.join(&x.dir))]
+                                  p.manifest.segmentation.mask.as_ref().map(|x| p.dir.join(&x.dir)),
+                                  shadow_rel(p).map(|r| p.dir.join(r)),
+                                  normals_rel(p).map(|r| p.dir.join(r))]
             .into_iter().flatten().collect();
-        for sub in ["media", "cache/masks", "cache/preview"] {
+        for sub in ["media", "cache/masks", "cache/preview", "cache/shadows", "cache/normals"] {
             for e in fs::read_dir(p.dir.join(sub)).into_iter().flatten().flatten() {
                 if keep.contains(&e.path()) {
                     continue;
@@ -873,6 +885,27 @@ pub async fn compute_shadows(app: AppHandle, state: State<'_, AppState>) -> Resu
         let tmp = out.with_extension("part");
         let (m2, t2) = (masks.clone(), tmp.clone());
         blocking(move || w.request("contact_shadows", json!({"masks_dir": m2, "out_dir": t2}))).await?;
+        std::fs::rename(&tmp, &out)?;
+    }
+    with_project(&state, |p| Ok(view(p)))
+}
+
+/// Calcule les normales approchées du sujet (relighting directionnel), une image par image, à partir
+/// du masque courant. Résultat mis en cache avec la clé du masque.
+#[tauri::command]
+pub async fn compute_normals(app: AppHandle, state: State<'_, AppState>) -> Result<ProjectView> {
+    let _busy = BusyGuard::acquire(&state.busy, "relighting")?;
+    let (masks, out) = with_project(&state, |p| {
+        let seg = &p.manifest.segmentation;
+        let mask = seg.mask.as_ref().filter(|_| seg.status == MaskStatus::Ready)
+            .ok_or_else(|| AppError::Msg("Calculez d'abord le masque du sujet.".into()))?;
+        Ok((p.resolve(&mask.dir)?, p.resolve(&normals_rel(p).unwrap())?))
+    })?;
+    if !out.exists() {
+        let w = worker_for(&app).await?;
+        let tmp = out.with_extension("part");
+        let (m2, t2) = (masks.clone(), tmp.clone());
+        blocking(move || w.request("normal_maps", json!({"masks_dir": m2, "out_dir": t2}))).await?;
         std::fs::rename(&tmp, &out)?;
     }
     with_project(&state, |p| Ok(view(p)))

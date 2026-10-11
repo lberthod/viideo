@@ -68,7 +68,7 @@ fn full_pipeline() {
         src: clip.clone(), start: 0.0, duration: 3.0, fps, has_audio: probe.has_audio, out_width: ow, out_height: oh,
         proxy_height: r.height, masks_dir: p.resolve(&mask_rel).unwrap(), background: None,
         composite: Composite { subject_scale: 0.8, subject_x: 0.1, edge: 0.15, temperature: 0.1, ..Composite::default() },
-        quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox, shadows_dir: None, element: None, dest: dest.clone(),
+        quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox, shadows_dir: None, element: None, normals_dir: None, dest: dest.clone(),
     };
     let mut last = 0.0;
     media::export(&tools.ffmpeg, &job, Arc::new(Mutex::new(None)), |f| last = f).unwrap();
@@ -245,7 +245,8 @@ fn e2e_cinemagraph() {
     assert!((p.duration - 241.0 / 24.0).abs() < 0.1, "2N−1 images en aller-retour");
 }
 
-/// Export avec ombre de contact, light wrap et élément de premier plan sur un projet existant :
+/// Export avec ombre de contact, light wrap, élément de premier plan (et relighting si
+/// VIDEEO_E2E_NORMALS est fourni) sur un projet existant :
 ///   VIDEEO_E2E_PROJECT=../../cache/dev_anim VIDEEO_E2E_SHADOWS=... VIDEEO_E2E_ELEMENT=x.png VIDEEO_E2E_OUT=o.mp4 \
 ///   cargo test e2e_integration_export -- --ignored --nocapture
 #[test]
@@ -261,6 +262,11 @@ fn e2e_integration_export() {
     c.shadow = 0.6;
     c.light_wrap = 0.6;
     c.foreground = Some(Foreground { path: "assets/elements/x.png".into(), width: 0.35, x: 0.3, y: 1.02 });
+    // Relighting si VIDEEO_E2E_NORMALS est fourni (lumière venant de la droite, en haut).
+    c.relight = 0.6;
+    c.light_x = 0.8;
+    c.light_y = -0.5;
+    c.light_color = "#ffd9a8".into();
     let job = ExportJob {
         src: p.source_path(), start: m.clip.start, duration: m.clip.duration, fps: (proxy.fps_num, proxy.fps_den),
         has_audio: false, out_width: w, out_height: h, proxy_height: proxy.height,
@@ -269,6 +275,7 @@ fn e2e_integration_export() {
         composite: c, quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox,
         shadows_dir: Some(PathBuf::from(std::env::var("VIDEEO_E2E_SHADOWS").unwrap())),
         element: Some(PathBuf::from(std::env::var("VIDEEO_E2E_ELEMENT").unwrap())),
+        normals_dir: std::env::var("VIDEEO_E2E_NORMALS").ok().map(PathBuf::from),
         dest: PathBuf::from(std::env::var("VIDEEO_E2E_OUT").unwrap()),
     };
     let t0 = std::time::Instant::now();

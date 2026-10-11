@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{err, Result};
 use crate::media::Probe;
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 pub const MANIFEST: &str = "project.json";
 const SUBDIRS: [&str; 5] = ["media", "assets", "cache", "exports", "logs"];
 
@@ -191,6 +191,26 @@ pub struct Composite {
     /// Élément de premier plan, devant le sujet (bureau, rambarde, végétation…).
     #[serde(default)]
     pub foreground: Option<Foreground>,
+    /// Relighting directionnel du sujet (0 = aucun, 1 = fort), à partir de normales approchées.
+    #[serde(default)]
+    pub relight: f64,
+    /// Direction de la lumière, dans le plan de l'image : x de −1 (gauche) à 1 (droite),
+    /// y de −1 (haut) à 1 (bas). Estimée sur le décor, modifiable.
+    #[serde(default)]
+    pub light_x: f64,
+    #[serde(default = "default_light_y")]
+    pub light_y: f64,
+    /// Couleur de la lumière principale (#rrggbb).
+    #[serde(default = "default_light_color")]
+    pub light_color: String,
+}
+
+fn default_light_y() -> f64 {
+    -0.5
+}
+
+fn default_light_color() -> String {
+    "#ffffff".into()
 }
 
 /// Élément de premier plan : image RGBA de la bibliothèque `assets/elements/`, placée devant le sujet.
@@ -223,6 +243,10 @@ impl Default for Composite {
             shadow: 0.0,
             light_wrap: 0.0,
             foreground: None,
+            relight: 0.0,
+            light_x: 0.0,
+            light_y: default_light_y(),
+            light_color: default_light_color(),
         }
     }
 }
@@ -242,15 +266,19 @@ impl Composite {
             ("flou du décor", self.bg_blur, 0.0, 30.0),
             ("ombre", self.shadow, 0.0, 1.0),
             ("light wrap", self.light_wrap, 0.0, 1.0),
+            ("relighting", self.relight, 0.0, 1.0),
+            ("direction X de la lumière", self.light_x, -1.0, 1.0),
+            ("direction Y de la lumière", self.light_y, -1.0, 1.0),
         ];
         for (name, v, lo, hi) in checks {
             if !v.is_finite() || v < lo || v > hi {
                 return err(format!("Réglage « {name} » hors limites ({v}, attendu entre {lo} et {hi})."));
             }
         }
-        let c = &self.background_color;
-        if !(c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit())) {
-            return err(format!("Couleur de fond invalide : {c} (format #rrggbb)."));
+        for (name, c) in [("de fond", &self.background_color), ("de la lumière", &self.light_color)] {
+            if !is_hex_color(c) {
+                return err(format!("Couleur {name} invalide : {c} (format #rrggbb)."));
+            }
         }
         if let Some(bg) = &self.background {
             if !is_safe_relative(bg) {
@@ -445,6 +473,10 @@ impl Project {
     }
 }
 
+pub fn is_hex_color(c: &str) -> bool {
+    c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
 /// Migrations de schéma, appliquées pas à pas jusqu'à la version courante.
 fn migrate(mut value: serde_json::Value, from: u32) -> Result<serde_json::Value> {
     let mut v = from;
@@ -473,6 +505,14 @@ fn migrate(mut value: serde_json::Value, from: u32) -> Result<serde_json::Value>
                 value["composite"]["shadow"] = 0.0.into();
                 value["composite"]["light_wrap"] = 0.0.into();
                 value["composite"]["foreground"] = serde_json::Value::Null;
+            }
+            // 4 -> 5 : relighting directionnel (désactivé).
+            4 => {
+                let d = Composite::default();
+                value["composite"]["relight"] = 0.0.into();
+                value["composite"]["light_x"] = d.light_x.into();
+                value["composite"]["light_y"] = d.light_y.into();
+                value["composite"]["light_color"] = d.light_color.into();
             }
             _ => return err(format!("Aucune migration connue depuis le schéma {v}.")),
         }
@@ -537,6 +577,9 @@ mod tests {
         v["composite"].as_object_mut().unwrap().remove("shadow");
         v["composite"].as_object_mut().unwrap().remove("light_wrap");
         v["composite"].as_object_mut().unwrap().remove("foreground");
+        for k in ["relight", "light_x", "light_y", "light_color"] {
+            v["composite"].as_object_mut().unwrap().remove(k);
+        }
         fs::write(dir.join(MANIFEST), serde_json::to_vec(&v).unwrap()).unwrap();
         let q = Project::open(&dir).unwrap();
         assert_eq!(q.manifest.schema_version, SCHEMA_VERSION);
@@ -547,6 +590,8 @@ mod tests {
         assert_eq!(q.manifest.generation.backend, "builtin");
         assert_eq!(q.manifest.composite.shadow, 0.0);
         assert!(q.manifest.composite.foreground.is_none());
+        assert_eq!(q.manifest.composite.relight, 0.0);
+        assert_eq!(q.manifest.composite.light_color, "#ffffff");
     }
 
     #[test]
@@ -557,6 +602,8 @@ mod tests {
         let c = Composite { subject_scale: 9.0, ..Composite::default() };
         assert!(c.validate().is_err());
         let c = Composite { background: Some("../x.png".into()), ..Composite::default() };
+        assert!(c.validate().is_err());
+        let c = Composite { light_color: "white".into(), ..Composite::default() };
         assert!(c.validate().is_err());
         assert!(Composite::default().validate().is_ok());
     }

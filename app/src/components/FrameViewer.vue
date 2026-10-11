@@ -22,6 +22,7 @@ const props = defineProps<{
   time?: number;
   shadowUrl?: string | null;
   elementUrl?: string | null;
+  normalsUrl?: string | null;
 }>();
 const emit = defineEmits<{
   (e: "point", x: number, y: number, positive: boolean): void;
@@ -56,12 +57,13 @@ async function render() {
     if (isComposite()) {
       if (!mask) { missing.value = "Pas de masque pour cette image : propagez le masque."; ctx.drawImage(frame, 0, 0, w, h); }
       else {
-        const [shadow, element] = await Promise.all([
+        const [shadow, element, normals] = await Promise.all([
           props.shadowUrl ? loadImage(props.shadowUrl).catch(() => null) : null,
           props.elementUrl ? loadImage(props.elementUrl).catch(() => null) : null,
+          props.normalsUrl ? loadImage(props.normalsUrl).catch(() => null) : null,
         ]);
         if (my !== token) return;
-        drawComposite(ctx, w, h, frame, mask, bg, props.composite, { shadow, element });
+        drawComposite(ctx, w, h, frame, mask, bg, props.composite, { shadow, element, normals });
       }
       if (props.mode === "split") {
         // À gauche du séparateur : la source d'origine.
@@ -179,7 +181,7 @@ function onUp() {
   else render();
 }
 
-watch(() => [props.frameUrl, props.maskUrl, props.backgroundUrl, props.mode, props.prompt, props.composite, props.width, props.height, props.time, props.shadowUrl, props.elementUrl], render, { deep: true });
+watch(() => [props.frameUrl, props.maskUrl, props.backgroundUrl, props.mode, props.prompt, props.composite, props.width, props.height, props.time, props.shadowUrl, props.elementUrl, props.normalsUrl], render, { deep: true });
 onMounted(render);
 </script>
 

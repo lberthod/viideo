@@ -1,6 +1,7 @@
 """Vidéo de démonstration : source | premier rendu | rendu corrigé, légendes AU-DESSUS de l'image.
 
-Usage : .venvs/vision/bin/python showcase/make_showcase.py
+Usage : .venvs/vision/bin/python showcase/make_showcase.py [v3]
+  (sans argument : intégration, v2 ; « v3 » : relighting, sans / avec)
 Les rendus sont ceux exportés par l'app (cache/<projet>/exports) ; rien n'est retouché ici.
 """
 import json
@@ -25,6 +26,13 @@ EXAMPLES = [
      "Cinémagraphe (lac + ciel animés), ombre de contact sous les pieds, light wrap, lumière dorée"),
 ]
 
+EXAMPLES_V3 = [
+    ("Présentatrice, terrasse alpine", "v2_presenter_alps", "v3_presenter_alps",
+     "Relighting : lumière lue sur le décor (soleil couchant à droite, teinte chaude), intensité 0,55"),
+    ("Randonneur, lac alpin", "v2_hiker", "v3_hiker",
+     "Relighting : lumière venant du haut (ciel), intensité 0,55 ; décor fixe ici (l'animation de la v2 n'est pas refaite)"),
+]
+
 
 def latest_export(project):
     d = ROOT / "cache" / project / "exports"
@@ -44,11 +52,11 @@ def bar(title, detail, path):
     im.save(path)
 
 
-def labels(path):
+def labels(path, names=("SOURCE", "PREMIER RENDU", "RENDU CORRIGÉ")):
     im = Image.new("RGBA", (3 * W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     f = ImageFont.truetype(FONT, 17)
-    for i, t in enumerate(["SOURCE", "PREMIER RENDU", "RENDU CORRIGÉ"]):
+    for i, t in enumerate(names):
         x = i * W + 10
         tw = d.textlength(t, font=f)
         d.rounded_rectangle((x, 8, x + tw + 16, 34), 5, fill=(0, 0, 0, 165))
@@ -56,11 +64,11 @@ def labels(path):
     im.save(path)
 
 
-def main():
+def main(v3=False):
     parts = []
     lab = OUT / "_labels.png"
-    labels(lab)
-    for i, (title, old, new, detail) in enumerate(EXAMPLES):
+    labels(lab, ("SOURCE", "SANS RELIGHTING", "AVEC RELIGHTING") if v3 else ("SOURCE", "PREMIER RENDU", "RENDU CORRIGÉ"))
+    for i, (title, old, new, detail) in enumerate(EXAMPLES_V3 if v3 else EXAMPLES):
         src, start, dur = clip_of(new)
         b = OUT / f"_bar{i}.png"
         bar(title, detail, b)
@@ -75,7 +83,7 @@ def main():
         parts.append(part)
     lst = OUT / "_list.txt"
     lst.write_text("".join(f"file '{p}'\n" for p in parts))
-    dest = OUT / "videeo_avant_apres_v2.mp4"
+    dest = OUT / ("videeo_relighting_v3.mp4" if v3 else "videeo_avant_apres_v2.mp4")
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:v", "libx264", "-crf", "19",
                     "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest)], check=True)
     for p in [*parts, lst, lab, *OUT.glob("_bar*.png")]:
@@ -84,4 +92,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(v3="v3" in sys.argv[1:])

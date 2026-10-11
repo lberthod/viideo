@@ -246,6 +246,21 @@ class VisionWorker:
             self._write_gray(out_dir / f.name, shadow)
         return {"frames": len(files), "with_shadow": with_shadow, "out_dir": str(out_dir)}
 
+    def op_normal_maps(self, p):
+        """Normales approchées du sujet image par image (PNG RGB, voir relight.py), pour le relighting."""
+        import cv2
+        from relight import encode, normals_from_mask
+        masks_dir = self._path(p["masks_dir"], must_exist=True)
+        out_dir = self._path(p["out_dir"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted(masks_dir.glob("*.png"), key=lambda f: int(f.stem))
+        for f in files:
+            m = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE) > 127
+            tmp = (out_dir / f.name).with_suffix(".tmp.png")
+            cv2.imwrite(str(tmp), encode(normals_from_mask(m))[..., ::-1])
+            tmp.replace(out_dir / f.name)
+        return {"frames": len(files), "out_dir": str(out_dir)}
+
     @staticmethod
     def _write_gray(path, values):
         import cv2
@@ -461,7 +476,7 @@ def main():
     send({"id": None, "event": "ready", "schema_version": SCHEMA_VERSION})
 
     ops = {"ping": worker.op_ping, "load_model": worker.op_load_model, "init_video": worker.op_init_video,
-           "contact_shadows": worker.op_contact_shadows,
+           "contact_shadows": worker.op_contact_shadows, "normal_maps": worker.op_normal_maps,
            "preview": worker.op_preview, "reset": worker.op_reset, "unload": worker.op_unload}
     while True:
         msg = inbox.get()

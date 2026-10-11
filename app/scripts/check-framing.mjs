@@ -53,4 +53,19 @@ for (const [name, aspect] of [["comptoir large", 2.5], ["pupitre carré", 1.0], 
   if (aspect >= 1) check(`${name} : au moins aussi large que le sujet`, e.width >= subjW * 1.09);
   check(`${name} : bas sous le cadre (coupure cachée)`, e.y >= 1.0 || e.y === 1.6);
 }
+// --- Relighting : mêmes coefficients que media.rs (test relight dans graph_contains_expected_stages) ---
+const rbody = src.slice(src.indexOf("const RELIGHT_LZ"), src.indexOf("const clamp8"))
+  .replace("export function lightKey(hex: string): [number, number, number]", "function lightKey(hex)")
+  .replace("export function relightCoeffs(c: Composite)", "function relightCoeffs(c)")
+  .replace("const ch = (i: number) =>", "const ch = (i) =>")
+  .replace(" as [number, number, number]", "");
+const { relightCoeffs, lightKey } = new Function(rbody + "; return { relightCoeffs, lightKey };")();
+const rc = relightCoeffs({ relight: 0.5, light_x: 1, light_y: 0, light_color: "#ffffff" });
+check(`relighting : ombrage identique à l'export (${rc.shade.map((v) => v.toFixed(4)).join(", ")})`,
+  [1.715, 0, 1.029, -1.372].every((v, i) => Math.abs(rc.shade[i] - v) < 1e-3));
+const r1 = relightCoeffs({ relight: 1, light_x: -0.3, light_y: -0.5, light_color: "#ffffff" });
+check("relighting : ombrage moyen = exposition inchangée", Math.abs(r1.offset * 255 + r1.scale[0] * 127.5 - 127.5) < 1e-9);
+const k = lightKey("#ff8000");
+check("relighting : couleur normalisée (moyenne 1)", k[0] > 1.5 && k[2] === 0 && Math.abs(lightKey("#808080")[1] - 1) < 1e-9);
+
 process.exit(fails ? 1 : 0);

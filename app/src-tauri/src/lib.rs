@@ -54,6 +54,7 @@ pub fn run() {
             commands::video_engines,
             commands::animate_background,
             commands::compute_shadows,
+            commands::compute_normals,
             commands::list_elements,
             commands::create_element,
             commands::import_element,

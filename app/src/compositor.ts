@@ -72,6 +72,75 @@ function applyColor(data: Uint8ClampedArray, c: Composite) {
   }
 }
 
+// --- Relighting directionnel (mêmes formules que media.rs::relight_coeffs) -----------------------
+const RELIGHT_LZ = 0.6;
+
+export function lightKey(hex: string): [number, number, number] {
+  const ch = (i: number) => { const v = parseInt(hex.slice(i, i + 2), 16); return Number.isFinite(v) ? v : 255; };
+  const r = ch(1), g = ch(3), b = ch(5);
+  const sum = Math.max(r + g + b, 1);
+  return [r, g, b].map((v) => Math.min(2, (3 * v) / sum)) as [number, number, number];
+}
+
+export function relightCoeffs(c: Composite) {
+  const n = Math.hypot(c.light_x, c.light_y, RELIGHT_LZ);
+  const l = [c.light_x / n, c.light_y / n, RELIGHT_LZ / n];
+  const s = c.relight;
+  return {
+    shade: [2 * l[0], 2 * l[1], 2 * l[2], -(l[0] + l[1] + l[2])],
+    scale: lightKey(c.light_color).map((k) => 0.6 * s * k),
+    offset: 0.5 * (1 - 0.6 * s),
+  };
+}
+
+const clamp8 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+
+/** Sujet × gain (normales encodées → ombrage → gain codé 127,5 = ×1), comme colorchannelmixer + blend. */
+function applyRelight(data: Uint8ClampedArray, normals: Uint8ClampedArray, c: Composite) {
+  const { shade: [a, b, z, d], scale: [kr, kg, kb], offset } = relightCoeffs(c);
+  const o = offset * 255;
+  for (let i = 0; i < data.length; i += 4) {
+    const sh = clamp8(a * normals[i] + b * normals[i + 1] + z * normals[i + 2] + d * 255);
+    data[i] = (data[i] * clamp8(kr * sh + o)) / 127.5;
+    data[i + 1] = (data[i + 1] * clamp8(kg * sh + o)) / 127.5;
+    data[i + 2] = (data[i + 2] * clamp8(kb * sh + o)) / 127.5;
+  }
+}
+
+/**
+ * Lumière du décor : direction = barycentre des 3 % de pixels les plus lumineux (après flou), par
+ * rapport au centre ; couleur = moyenne de ces pixels. Volontairement simple et prévisible ;
+ * l'utilisateur corrige ensuite la direction s'il le faut.
+ */
+export function estimateLight(bg: Drawable | null): Pick<Composite, "light_x" | "light_y" | "light_color"> | null {
+  if (!bg) return null;
+  const [iw, ih] = dims(bg);
+  const w = 160, h = Math.max(1, Math.round((160 * ih) / iw));
+  small.width = w; small.height = h;
+  const ctx = small.getContext("2d", { willReadFrequently: true })!;
+  ctx.filter = `blur(${0.02 * h}px)`;
+  ctx.drawImage(bg, 0, 0, w, h);
+  ctx.filter = "none";
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < lum.length; i++) lum[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+  const thr = Array.from(lum).sort((p, q) => p - q)[Math.floor(lum.length * 0.97)];
+  let n = 0, sx = 0, sy = 0, r = 0, g = 0, b = 0;
+  for (let i = 0; i < lum.length; i++) {
+    if (lum[i] < thr) continue;
+    n++; sx += i % w; sy += Math.floor(i / w); r += d[i * 4]; g += d[i * 4 + 1]; b += d[i * 4 + 2];
+  }
+  if (!n) return null;
+  const hex = (v: number) => Math.round(v / n).toString(16).padStart(2, "0");
+  return {
+    light_x: round2(clamp((sx / n / w - 0.5) * 2.5, -1, 1)),
+    // Lumière jamais franchement par en dessous : un décor clair en bas (neige, eau) ne doit pas
+    // éclairer le visage par le menton.
+    light_y: round2(clamp((sy / n / h - 0.5) * 2.5, -1, 0.3)),
+    light_color: `#${hex(r)}${hex(g)}${hex(b)}`,
+  };
+}
+
 const work = document.createElement("canvas");
 const maskCanvas = document.createElement("canvas");
 
@@ -89,8 +158,10 @@ function maskAlpha(mask: HTMLImageElement, w: number, h: number, c: Composite): 
   return m;
 }
 
+const normalsCanvas = document.createElement("canvas");
+
 /** Sujet détouré (RGBA) à la taille du proxy. */
-export function cutout(frame: HTMLImageElement, mask: HTMLImageElement, c: Composite): HTMLCanvasElement {
+export function cutout(frame: HTMLImageElement, mask: HTMLImageElement, c: Composite, normals?: HTMLImageElement | null): HTMLCanvasElement {
   const w = frame.naturalWidth, h = frame.naturalHeight;
   const m = maskAlpha(mask, w, h, c);
   work.width = w; work.height = h;
@@ -98,6 +169,12 @@ export function cutout(frame: HTMLImageElement, mask: HTMLImageElement, c: Compo
   ctx.drawImage(frame, 0, 0);
   const img = ctx.getImageData(0, 0, w, h);
   applyColor(img.data, c);
+  if (normals && c.relight > 0.01) {
+    normalsCanvas.width = w; normalsCanvas.height = h;
+    const nctx = normalsCanvas.getContext("2d", { willReadFrequently: true })!;
+    nctx.drawImage(normals, 0, 0, w, h);
+    applyRelight(img.data, nctx.getImageData(0, 0, w, h).data, c);
+  }
   for (let i = 0; i < img.data.length; i += 4) img.data[i + 3] = m[i];
   ctx.putImageData(img, 0, 0);
   return work;
@@ -115,9 +192,9 @@ const layer2 = document.createElement("canvas");
 // media.rs : WRAP_MASK_BLUR_720, WRAP_BG_BLUR_720, wrap_gain
 const WRAP_MASK_BLUR_720 = 10, WRAP_BG_BLUR_720 = 24;
 
-export interface Extras { shadow?: HTMLImageElement | null; element?: HTMLImageElement | null }
+export interface Extras { shadow?: HTMLImageElement | null; element?: HTMLImageElement | null; normals?: HTMLImageElement | null }
 
-/** Ordre (identique à l'export) : décor, ombre, sujet, light wrap, élément de premier plan. */
+/** Ordre (identique à l'export) : décor, ombre, sujet (couleur puis relighting), light wrap, élément. */
 export function drawComposite(
   ctx: CanvasRenderingContext2D, w: number, h: number,
   frame: HTMLImageElement, mask: HTMLImageElement, bg: Drawable | null, c: Composite, extras: Extras = {},
@@ -146,7 +223,7 @@ export function drawComposite(
     ctx.drawImage(sc, sx, sy, sw, sh);
   }
 
-  const fg = cutout(frame, mask, c);
+  const fg = cutout(frame, mask, c, extras.normals);
   ctx.drawImage(fg, sx, sy, sw, sh);
 
   if (c.light_wrap > 0.01) {

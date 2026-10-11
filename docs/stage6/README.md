@@ -50,10 +50,27 @@ Elle est calculée **image par image** à partir du masque : une ellipse adoucie
 
 La lumière floutée du décor déborde légèrement sur une bande de bord du sujet. La bande vaut masque × (1 − flou du masque) ; le mélange se fait vers le décor flouté. L'aperçu et l'export utilisent les mêmes constantes (`WRAP_*_720` dans `media.rs` et `compositor.ts`).
 
+### 5. Relighting directionnel
+
+Le sujet garde la lumière de son tournage : souvent une face uniformément éclairée de studio, alors que le décor a une lumière qui vient d'un côté. Le relighting éclaire le sujet **du côté d'où vient la lumière du décor, avec sa couleur**.
+
+- **Lumière du décor** (« Lire la lumière du décor ») : direction = barycentre des 3 % de pixels les plus lumineux par rapport au centre ; couleur = moyenne de ces pixels. Une lumière n'arrive jamais franchement par en dessous, pour qu'un sol clair (neige, eau) n'éclaire pas le visage par le menton. Direction, hauteur et couleur restent réglables.
+- **Forme du sujet** : des normales approchées, calculées **à partir du seul masque** (`workers/vision/relight.py`). Chaque segment horizontal (tronc, bras, jambe) est vu comme un cylindre vertical ; le haut de la tête et des épaules regarde vers le haut. Un sujet coupé par le cadre ne « tourne » pas au bord de l'image. Calcul : ~0,07 s par image, mis en cache avec la clé du masque.
+- **Éclairage** : gain = 1 − 0,6·s + 1,2·s·couleur·max(0, N·L). Un ombrage moyen laisse l'exposition inchangée : le côté éclairé monte jusqu'à ×(1 + 0,6·s), le côté opposé descend jusqu'à ×(1 − 0,6·s).
+- **Export** : deux `colorchannelmixer` (N·L puis gain, la composante alpha = 255 servant de constante) et un `blend` multiplicatif ; l'aperçu applique les mêmes formules, vérifiées des deux côtés par des tests (`cargo test`, `npm test`).
+
+![Sans / avec relighting : la lumière du couchant vient de la droite](relighting-closeup.jpg)
+
+*Export de l'app, même image. À droite, le côté droit du visage et de la veste prend la lumière chaude du couchant ; le côté gauche passe dans l'ombre.*
+
+Dans l'app (scénarios `app/dev/demo_v3_*.json`), la lumière lue sur le décor alpin vaut x = 0,71, y = −0,43, couleur `#fbebcd` ; pour le lac, x = 0,32, y = −0,83 (lumière du ciel). Normales : 125 images en quelques secondes, 19 Mo de cache. Comparaison vidéo : [`showcase/videeo_relighting_v3.mp4`](../../showcase/videeo_relighting_v3.mp4) (`make_showcase.py v3`).
+
+Pourquoi pas un relighting génératif (IC-Light, etc.) : aucun modèle de ce type n'est installé sur la machine, et un modèle image appliqué image par image scintille sur une vidéo. Ici, l'ombrage ne dépend que du masque, déjà stabilisé et contrôlé : il ne scintille pas.
+
 ### Ordre de composition (identique dans l'aperçu et l'export)
 
 ```text
-décor (flou éventuel) → ombre de contact → sujet → light wrap → élément de premier plan
+décor (flou éventuel) → ombre de contact → sujet (couleur, puis relighting) → light wrap → élément de premier plan
 ```
 
 Le graphe FFmpeg n'ajoute chaque étape que si elle est activée. Il a été vérifié par un test qui contrôle les indices d'entrée et les filtres, puis par un export réel avec les trois effets (3,5 s pour 5 s en 720p).
@@ -72,10 +89,10 @@ Coût : la génération et le détourage d'un élément prennent ~15–20 s (FLU
 
 ## Ce qui reste perfectible
 
-- **Lumière du sujet** : la présentatrice garde la lumière de studio de la prise de vue. Harmonisation et light wrap rapprochent les tons sans refaire l'éclairage, ce que ferait un relighting génératif.
+- **Lumière du sujet** : le relighting directionnel donne le bon côté et la bonne couleur, mais sa forme vient du masque : il ne connaît ni le relief du visage (nez, orbites) ni les plis des vêtements, et il n'efface pas les ombres de la prise de vue d'origine. Un contre-jour marqué (soleil derrière le sujet) n'est pas reproduit.
 - **Perspective de l'élément généré** : FLUX produit une vue de face à hauteur d'yeux. Si la caméra du décor est plus haute ou plus basse, le comptoir peut paraître légèrement « collé ».
 - **Qualité variable de l'élément** : FLUX ne suit pas toujours la description (le panneau vertical, par exemple). On régénère avec une autre graine, ou on importe une image.
 
 ## Projet
 
-**Schéma 4**, avec une migration testée depuis le schéma 3 : ombre, light wrap, élément de premier plan.
+**Schéma 5**, avec des migrations testées : ombre, light wrap, élément de premier plan (schéma 4), relighting (`relight`, `light_x`, `light_y`, `light_color`, schéma 5).

@@ -156,6 +156,8 @@ pub struct ExportJob {
     pub shadows_dir: Option<PathBuf>,
     /// Image RGBA de l'élément de premier plan (réglages dans `composite.foreground`).
     pub element: Option<PathBuf>,
+    /// Normales approchées du sujet image par image (PNG RGB, taille du proxy), pour le relighting.
+    pub normals_dir: Option<PathBuf>,
     pub dest: PathBuf,
 }
 
@@ -175,6 +177,43 @@ pub fn encoder_args(q: &ExportQuality, videotoolbox: bool) -> Vec<&'static str> 
         ExportQuality::Fast => vec!["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"],
         ExportQuality::Balanced => vec!["-c:v", "libx264", "-preset", "medium", "-crf", "18"],
         ExportQuality::High => vec!["-c:v", "libx264", "-preset", "slow", "-crf", "16"],
+    }
+}
+
+/// Relighting directionnel (mêmes formules dans compositor.ts).
+///
+/// Normale encodée n = (N + 1) / 2 × 255 ; lumière L = normalise(x, y, RELIGHT_LZ).
+/// - ombrage (0..255) = clip(Σ 2·L_c·n_c − 255·Σ L_c) = 255 × max(0, N·L) ;
+/// - gain (codé 127,5 = ×1) = 127,5 × (1 − 0,6·s) + 0,6·s·k_c × ombrage, k = couleur de la lumière
+///   normalisée à une moyenne de 1. Un ombrage moyen (≈ 0,5) laisse l'exposition inchangée ;
+/// - sujet × gain / 127,5.
+pub const RELIGHT_LZ: f64 = 0.6;
+
+pub struct RelightCoeffs {
+    /// Coefficients (R, G, B, A) appliqués à la normale encodée (A = 255) : ombrage.
+    pub shade: [f64; 4],
+    /// Gain par canal : échelle de l'ombrage, et décalage (multiplié par A = 255).
+    pub scale: [f64; 3],
+    pub offset: f64,
+}
+
+pub fn light_key(hex: &str) -> [f64; 3] {
+    let ch = |i: usize| u8::from_str_radix(hex.get(i..i + 2).unwrap_or("ff"), 16).unwrap_or(255) as f64;
+    let (r, g, b) = (ch(1), ch(3), ch(5));
+    let sum = (r + g + b).max(1.0);
+    [r, g, b].map(|v| (3.0 * v / sum).min(2.0))
+}
+
+pub fn relight_coeffs(c: &Composite) -> RelightCoeffs {
+    let (x, y, z) = (c.light_x, c.light_y, RELIGHT_LZ);
+    let n = (x * x + y * y + z * z).sqrt();
+    let l = [x / n, y / n, z / n];
+    let s = c.relight;
+    let k = light_key(&c.light_color);
+    RelightCoeffs {
+        shade: [2.0 * l[0], 2.0 * l[1], 2.0 * l[2], -(l[0] + l[1] + l[2])],
+        scale: k.map(|kc| 0.6 * s * kc),
+        offset: 0.5 * (1.0 - 0.6 * s),
     }
 }
 
@@ -227,18 +266,40 @@ pub fn filter_graph(job: &ExportJob) -> String {
     let shadow = job.shadows_dir.is_some() && c.shadow > 0.01;
     let wrap = c.light_wrap > 0.01;
     let element = job.element.is_some() && c.foreground.is_some();
+    let relight = job.normals_dir.is_some() && c.relight > 0.01;
     let sh_idx = 3;
     let el_idx = if shadow { 4 } else { 3 };
-    let mut g = format!(
+    let nm_idx = el_idx + element as usize;
+    let mut g = String::new();
+    let src_out = if relight {
+        let r = relight_coeffs(c);
+        let [a, b, z, d] = r.shade;
+        let shade: String = ["r", "g", "b"].iter()
+            .map(|o| format!("{o}r={a:.4}:{o}g={b:.4}:{o}b={z:.4}:{o}a={d:.4}")).collect::<Vec<_>>().join(":");
+        let [kr, kg, kb] = r.scale;
+        let o = r.offset;
+        g.push_str(&format!(
+            "[{nm_idx}:v]scale={w}:{h}:flags=bilinear,format=rgba,colorchannelmixer={shade},\
+colorchannelmixer=rr={kr:.4}:rg=0:rb=0:ra={o:.4}:gr=0:gg={kg:.4}:gb=0:ga={o:.4}:br=0:bg=0:bb={kb:.4}:ba={o:.4},format=gbrp[gain];"));
+        "[s0]"
+    } else {
+        "[src]"
+    };
+    g.push_str(&format!(
         "[0:v]fps={fps},scale={w}:{h}:flags=bicubic,setsar=1,\
-eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}[src];\
+eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}{src_out};",
+        b = c.brightness, ct = c.contrast, sa = c.saturation));
+    if relight {
+        g.push_str("[s0]format=gbrp[s1];[s1][gain]blend=all_expr='min(255\\,A*B/127.5)',format=rgba[src];");
+    }
+    g.push_str(&format!(
+        "\
 [1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}{edge}{split};\
 [src][m1]alphamerge,scale={sw}:{sh}:flags=bicubic[fg];\
 [2:v]fps={fps},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1{bgblur},format=rgba{bgsplit};",
-        b = c.brightness, ct = c.contrast, sa = c.saturation,
         split = if wrap { ",split[m1][m2]" } else { "[m1]" },
         bgsplit = if wrap { ",split[bg][bgw]" } else { "[bg]" },
-    );
+    ));
     let mut base = "[bg]".to_string();
     if shadow {
         // L'ombre suit exactement la transformation du sujet (échelle, position).
@@ -293,6 +354,9 @@ pub fn export(ffmpeg: &Path, job: &ExportJob, slot: Arc<Mutex<Option<Child>>>, m
     }
     if let Some(el) = job.element.as_ref().filter(|_| job.composite.foreground.is_some()) {
         cmd.args(["-loop", "1", "-framerate", &fps, "-i"]).arg(el);
+    }
+    if let Some(dir) = job.normals_dir.as_ref().filter(|_| job.composite.relight > 0.01) {
+        cmd.args(["-framerate", &fps, "-start_number", "0", "-i"]).arg(dir.join("%05d.png"));
     }
     cmd.args(["-t", &format!("{:.3}", job.duration), "-filter_complex", &filter_graph(job), "-map", "[out]"]);
     if job.has_audio {
@@ -357,7 +421,7 @@ mod tests {
             src: "a.mov".into(), start: 0.0, duration: 2.0, fps: (25, 1), has_audio: false,
             out_width: 1920, out_height: 1080, proxy_height: 720, masks_dir: "m".into(), background: None,
             composite: Composite { subject_scale: 0.5, subject_x: 0.25, edge: 0.25, temperature: -0.1, ..Composite::default() },
-            quality: ExportQuality::Fast, videotoolbox: true, shadows_dir: None, element: None, dest: "o.mp4".into(),
+            quality: ExportQuality::Fast, videotoolbox: true, shadows_dir: None, element: None, normals_dir: None, dest: "o.mp4".into(),
         };
         let g = filter_graph(&job);
         assert!(g.contains("fps=25/1"));
@@ -381,5 +445,25 @@ mod tests {
         assert!(g.contains("[4:v]scale=960:-2:flags=lanczos,format=rgba[el]"), "{g}");
         assert!(g.contains("overlay=x=0.5000*W-w/2:y=1.0000*H-h"));
         assert!(g.ends_with("[withel]format=yuv420p[out]"));
+        // Relighting : normales en entrée 5 (après ombre et élément), gain multiplié au sujet.
+        let mut job3 = job2;
+        job3.composite.relight = 0.5;
+        job3.composite.light_x = 1.0;
+        job3.composite.light_y = 0.0;
+        job3.normals_dir = Some("n".into());
+        let g = filter_graph(&job3);
+        assert!(g.starts_with("[5:v]scale=1920:1080:flags=bilinear,format=rgba,colorchannelmixer=rr=1.7150:rg=0.0000:rb=1.0290:ra=-1.3720"), "{g}");
+        assert!(g.contains("[s1][gain]blend=all_expr='min(255\\,A*B/127.5)',format=rgba[src]"), "{g}");
+    }
+
+    #[test]
+    fn relight_keeps_mean_exposure() {
+        let c = Composite { relight: 1.0, light_color: "#ffffff".into(), ..Composite::default() };
+        let r = relight_coeffs(&c);
+        // Ombrage moyen 0,5 (127,5) : gain codé 127,5, soit ×1.
+        assert!((r.offset * 255.0 + r.scale[0] * 127.5 - 127.5).abs() < 1e-9);
+        assert_eq!(light_key("#ffffff"), [1.0, 1.0, 1.0]);
+        let k = light_key("#ff8000");
+        assert!(k[0] > 1.5 && k[2] == 0.0);
     }
 }

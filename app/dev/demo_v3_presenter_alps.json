@@ -1,0 +1,41 @@
+{
+  "background": "/Users/loicberthod/Desktop/Coding/videeo/stage0/results/backgrounds/mountain_terrace_1280x720.png",
+  "start": 0,
+  "duration": 5,
+  "box": [
+    440,
+    60,
+    910,
+    719
+  ],
+  "points": [
+    [
+      700,
+      180
+    ],
+    [
+      700,
+      340
+    ]
+  ],
+  "negative": [
+    [
+      680,
+      640
+    ],
+    [
+      600,
+      600
+    ]
+  ],
+  "framing": "center",
+  "element": {
+    "prompt": "comptoir en bois massif de chalet à façade pleine fermée jusqu'au sol, sans pieds apparents, plateau épais, vue de face",
+    "cover": 0.36,
+    "seed": 11
+  },
+  "light_wrap": 0.5,
+  "harmonize": true,
+  "export_quality": "balanced",
+  "relight": 0.55
+}
