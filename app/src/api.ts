@@ -47,6 +47,23 @@ export interface MaskQuality {
   frames: FrameQuality[];
 }
 
+export type PlanMode = "fast" | "balanced" | "quality";
+export interface PlanStep {
+  op: string; params: Record<string, unknown>; why: string; needs_user: string | null; blocked: string | null; enabled: boolean;
+  estimate: { seconds: number; models: string[]; peak_gb: number; disk_mb: number };
+}
+export interface Plan {
+  schema_version: number; summary: string; mode: PlanMode; steps: PlanStep[]; warnings: string[];
+  rejected: { op: string; reason: string }[];
+  totals: { seconds: number; peak_gb: number; disk_mb: number; models: string[] };
+  alternatives: [PlanMode, number][];
+}
+export interface PlannerResult { plan: Plan; model: string; seconds: number; attempts: number }
+export interface PlannerStatus { llm: { url: string; reachable: boolean; version: string | null; models: string[]; detail: string }; model: string }
+
+/** Ajout au prompt de génération pour obtenir une « plaque » de décor utilisable derrière un sujet. */
+export const PLATE_SUFFIX = "Photographie réaliste, plan large à hauteur d'yeux, scène vide sans personne, sol visible au premier plan, faible profondeur de champ.";
+
 export interface DiskUsage {
   proxy_current: number; proxy_stale: number; masks_current: number; masks_stale: number;
   previews: number; assets: number; exports: number;
@@ -106,6 +123,11 @@ export const api = {
   deleteBackground: (rel: string) => invoke<BackgroundItem[]>("delete_background", { rel }),
   imageBackends: () => invoke<ImageBackends>("image_backends"),
   setGeneration: (settings: GenerationSettings) => invoke<ProjectView>("set_generation", { settings }),
+  plannerStatus: () => invoke<PlannerStatus>("planner_status"),
+  setPlannerModel: (model: string) => invoke<void>("set_planner_model", { model }),
+  proposePlan: (instruction: string, mode: PlanMode) => invoke<PlannerResult>("propose_plan", { instruction, mode }),
+  revalidatePlan: (plan: Plan, modeChanged: boolean) => invoke<Plan>("revalidate_plan", { plan, modeChanged }),
+  releasePlanner: () => invoke<void>("release_planner"),
   generateBackgrounds: (prompt: string, count: number, seed: number | null) =>
     invoke<BackgroundItem[]>("generate_backgrounds", { prompt, count, seed }),
 };

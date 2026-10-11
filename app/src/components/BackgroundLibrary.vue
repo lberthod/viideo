@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
-  api, errorText, fileUrl, onImageProgress,
+  api, errorText, fileUrl, onImageProgress, PLATE_SUFFIX,
   type BackgroundItem, type ImageBackends, type ProjectView,
 } from "../api";
 
@@ -40,7 +40,6 @@ const STYLES = [
   { label: "Coucher de soleil", text: "à l'heure dorée, lumière chaude rasante" },
   { label: "Nuit", text: "de nuit, éclairage urbain, ambiance bleutée" },
 ];
-const PLATE = "Photographie réaliste, plan large à hauteur d'yeux, scène vide sans personne, sol visible au premier plan, faible profondeur de champ.";
 
 function addStyle(t: string) {
   prompt.value = prompt.value.trim() ? `${prompt.value.trim()}, ${t}` : t;
@@ -83,7 +82,7 @@ async function generate() {
   emit("error", null);
   generating.value = { index: 0, count: count.value, done: 0, total: 0 };
   try {
-    const text = empty.value ? `${prompt.value.trim()}. ${PLATE}` : prompt.value.trim();
+    const text = empty.value ? `${prompt.value.trim()}. ${PLATE_SUFFIX}` : prompt.value.trim();
     const made = await api.generateBackgrounds(text, count.value, seed.value);
     await refresh();
     if (made.length) await choose(made[0]);

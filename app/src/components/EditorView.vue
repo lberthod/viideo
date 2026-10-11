@@ -4,8 +4,10 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api, errorText, fileUrl, formatBytes, formatTime, frameName, onExportProgress, onMaskProgress,
-  type Composite, type DiskUsage, type ExportQuality, type ExportRecord, type MaskQuality, type Prompt, type ProjectView,
+  type Composite, type DiskUsage, type ExportQuality, type ExportRecord, type MaskQuality, type Plan, type PlanStep, type Prompt, type ProjectView,
+  PLATE_SUFFIX,
 } from "../api";
+import AssistantPanel, { type StepState } from "./AssistantPanel.vue";
 import { framing, harmonize, LIGHTING, loadImage, preload, subjectBounds, type FramingPreset } from "../compositor";
 import BackgroundLibrary from "./BackgroundLibrary.vue";
 import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
@@ -13,7 +15,7 @@ import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
 const props = defineProps<{ initial: ProjectView }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
-type Step = "clip" | "subject" | "background" | "export";
+type Step = "assistant" | "clip" | "subject" | "background" | "export";
 const pv = ref<ProjectView>(props.initial);
 const step = ref<Step>(props.initial.manifest.proxy ? "subject" : "clip");
 const frame = ref(0);
@@ -147,6 +149,7 @@ async function propagate() {
 
 // --- Décor ---------------------------------------------------------------------
 const library = ref<InstanceType<typeof BackgroundLibrary> | null>(null);
+const assistant = ref<InstanceType<typeof AssistantPanel> | null>(null);
 
 /** Le décor a changé côté projet (import, génération, choix) : on aligne l'état local du composite. */
 function onLibraryApplied(v: ProjectView) {
@@ -283,6 +286,99 @@ function onKey(ev: KeyboardEvent) {
   else if (ev.key === "p") nextFlag(-1);
 }
 
+// --- Exécution d'un plan de l'assistant --------------------------------------------------
+// Chaque étape appelle la même commande Rust que l'interface manuelle, qui revalide ses paramètres.
+const planRun = ref<null | { plan: Plan; states: StepState[]; index: number; waiting: string | null }>(null);
+let stopRequested = false;
+
+async function executePlan(p: Plan) {
+  error.value = null;
+  stopRequested = false;
+  await api.releasePlanner().catch(() => undefined); // libère la mémoire du LLM avant SAM 2 / FLUX.2
+  planRun.value = {
+    plan: JSON.parse(JSON.stringify(p)),
+    states: p.steps.map((s) => (s.enabled && !s.blocked && s.op !== "note" ? "pending" : "skipped")),
+    index: 0, waiting: null,
+  };
+  await continuePlan();
+}
+
+function resumePlan() {
+  step.value = "assistant";
+  continuePlan();
+}
+
+function stopPlan() {
+  stopRequested = true;
+  if (job.value?.cancellable) cancel();
+  planRun.value = null;
+}
+
+async function continuePlan() {
+  const r = planRun.value;
+  if (!r) return;
+  r.waiting = null;
+  for (let i = r.index; i < r.plan.steps.length; i++) {
+    if (stopRequested || !planRun.value) return;
+    r.index = i;
+    if (r.states[i] === "skipped" || r.states[i] === "done") continue;
+    r.states[i] = "running";
+    error.value = null;
+    let outcome: "ok" | "wait" | "fail";
+    try { outcome = await runStep(r.plan.steps[i]); } catch (e) { error.value = errorText(e); outcome = "fail"; }
+    if (outcome === "wait") {
+      r.states[i] = "waiting";
+      r.waiting = "Sélectionnez le sujet dans l'onglet Sujet (clic sur la personne ou rectangle), puis revenez ici et cliquez « Reprendre le plan ».";
+      return;
+    }
+    if (outcome === "fail" || error.value) { r.states[i] = "error"; return; }
+    r.states[i] = "done";
+  }
+  r.index = r.plan.steps.length;
+}
+
+async function runStep(s: PlanStep): Promise<"ok" | "wait" | "fail"> {
+  const p = s.params as Record<string, unknown>;
+  const ok = () => (error.value ? "fail" : "ok") as "ok" | "fail";
+  switch (s.op) {
+    case "set_clip":
+      clipStart.value = Number(p.start); clipDuration.value = Number(p.duration);
+      await prepareClip(); step.value = "assistant"; return ok();
+    case "segment_subject":
+      if (!prompts.value.length) return "wait";
+      if (m.value.segmentation.cleanup !== (p.cleanup !== false)) apply(await api.setCleanup(p.cleanup !== false));
+      await propagate(); return ok();
+    case "generate_background": {
+      const text = p.empty_scene === false ? String(p.prompt) : `${String(p.prompt)}. ${PLATE_SUFFIX}`;
+      job.value = { label: "Génération du décor", done: 0, total: 0, cancellable: true };
+      try {
+        const made = await api.generateBackgrounds(text, Number(p.variants ?? 1), null);
+        onLibraryApplied(await api.selectBackground(made[0].path));
+      } finally { job.value = null; }
+      return ok();
+    }
+    case "use_background": {
+      const item = (await api.listBackgrounds()).find((b) => b.id === p.id);
+      if (!item) { error.value = `Décor ${String(p.id)} introuvable.`; return "fail"; }
+      onLibraryApplied(await api.selectBackground(item.path)); return ok();
+    }
+    case "solid_background":
+      await removeBackground(); composite.value = { ...composite.value, background: null, background_color: String(p.color) }; return ok();
+    case "framing": await applyFraming(p.preset as FramingPreset); return ok();
+    case "lighting": applyLighting(String(p.preset)); return ok();
+    case "adjust": composite.value = { ...composite.value, ...(p as Partial<Composite>) }; return ok();
+    case "harmonize": await autoHarmonize(); return ok();
+    case "export": {
+      // Les réglages du composite sont enregistrés avec un léger délai : on les écrit avant l'export.
+      window.clearTimeout(compositeTimer);
+      apply(await api.setComposite({ ...composite.value }));
+      await setQuality(String(p.quality) as ExportQuality);
+      await exportVideo(); return ok();
+    }
+    default: return "ok";
+  }
+}
+
 // --- Démonstration automatique (dev uniquement, VIDEEO_DEV_DEMO=1) -----------------
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 interface DemoSpec {
@@ -290,6 +386,8 @@ interface DemoSpec {
   export_quality?: ExportQuality;
   /** Étape 3 : génère le décor au lieu de l'importer, puis applique un cadrage et une lumière. */
   generate_prompt?: string; framing?: FramingPreset; lighting?: string;
+  /** Étape 4 : demande en langage naturel exécutée par l'assistant. */
+  assistant?: { instruction: string; mode: "fast" | "balanced" | "quality" };
 }
 async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
@@ -297,6 +395,20 @@ async function runDemo(spec: DemoSpec) {
   tool.value = "box"; await onBox(spec.box);
   for (const [x, y] of spec.points) await onPoint(x, y, true);
   await mark("2-preview");
+  if (spec.assistant) {
+    step.value = "assistant";
+    await pause(1500);
+    const r = await api.proposePlan(spec.assistant.instruction, spec.assistant.mode);
+    assistant.value?.setPlan(r, spec.assistant.instruction);
+    await mark("3-plan");
+    await executePlan(r.plan);
+    await mark("4-executed");
+    mode.value = "composite";
+    step.value = "assistant";
+    await mark("5-final");
+    if (error.value) await api.devLog(`DEMO error ${error.value}`);
+    return;
+  }
   await propagate(); frame.value = flaggedList.value[0]?.frame ?? Math.floor(frames.value / 2); await mark("3-quality");
   step.value = "background";
   if (spec.generate_prompt) {
@@ -340,10 +452,11 @@ const outSize = computed(() => {
   return `${Math.round((w * k) / 2) * 2}×${Math.round((h * k) / 2) * 2}`;
 });
 const steps: { id: Step; label: string }[] = [
-  { id: "clip", label: "Extrait" }, { id: "subject", label: "Sujet" },
+  { id: "assistant", label: "Assistant" }, { id: "clip", label: "Extrait" }, { id: "subject", label: "Sujet" },
   { id: "background", label: "Décor" }, { id: "export", label: "Export" },
 ];
 function stepState(id: Step) {
+  if (id === "assistant") return planRun.value ? (planRun.value.waiting ? "warn" : "ok") : "none";
   if (id === "clip") return proxy.value ? "ok" : "none";
   if (id === "subject") return status.value === "ready" ? "ok" : status.value === "stale" ? "warn" : "none";
   if (id === "background") return m.value.composite.background ? "ok" : "none";
@@ -361,7 +474,7 @@ function stepState(id: Step) {
           · {{ fps.toFixed(2) }} i/s · {{ formatTime(probe.duration) }}{{ probe.has_audio ? " · audio" : "" }}{{ probe.rotation ? ` · rotation ${probe.rotation}°` : "" }}</span>
       </div>
       <nav class="steps">
-        <button v-for="s in steps" :key="s.id" :class="{ active: step === s.id }" :disabled="s.id !== 'clip' && !proxy" @click="step = s.id">
+        <button v-for="s in steps" :key="s.id" :class="{ active: step === s.id }" :disabled="s.id !== 'clip' && s.id !== 'assistant' && !proxy" @click="step = s.id">
           <i class="dot" :class="stepState(s.id)"></i>{{ s.label }}
         </button>
       </nav>
@@ -400,8 +513,13 @@ function stepState(id: Step) {
       </section>
 
       <aside class="panel">
+        <!-- Assistant -->
+        <template v-if="step === 'assistant'">
+          <AssistantPanel ref="assistant" :busy="!!job" :run="planRun" @execute="executePlan" @resume="resumePlan" @stop="stopPlan" @error="error = $event" />
+        </template>
+
         <!-- Extrait -->
-        <template v-if="step === 'clip'">
+        <template v-else-if="step === 'clip'">
           <h2>Extrait à traiter</h2>
           <p class="muted">Commencez court : quelques secondes suffisent pour régler le détourage. Le proxy est extrait en 720p à cadence constante.</p>
           <label>Début (s)<input id="clip-start" type="number" min="0" :max="probe.duration" step="0.1" v-model.number="clipStart" /></label>

@@ -1,6 +1,8 @@
 mod backgrounds;
 mod comfy;
 mod commands;
+mod llm;
+mod plan;
 mod env;
 mod error;
 mod media;
@@ -43,6 +45,11 @@ pub fn run() {
             commands::set_composite,
             commands::export_video,
             commands::project_path,
+            commands::planner_status,
+            commands::set_planner_model,
+            commands::propose_plan,
+            commands::revalidate_plan,
+            commands::release_planner,
             commands::mask_quality,
             commands::set_cleanup,
             commands::set_export_quality,

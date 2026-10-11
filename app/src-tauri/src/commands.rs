@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::backgrounds::{self, BackgroundItem};
 use crate::comfy;
+use crate::llm;
+use crate::plan::{self, Mode, Plan};
 use crate::env::{self, Tools, ToolStatus};
 use crate::error::{err, AppError, Result};
 use crate::media::{self, ExportJob, Probe};
@@ -30,12 +32,15 @@ pub struct AppState {
     pub comfy_cancel: Arc<std::sync::atomic::AtomicBool>,
     /// Une seule tâche lourde à la fois (propagation, génération ou export).
     pub busy: Mutex<Option<&'static str>>,
+    /// Planificateur LLM : (adresse Ollama, modèle). Réglage de l'application, pas du projet.
+    pub planner: Mutex<(String, String)>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         AppState { tools: Tools::detect(), project: Mutex::new(None), worker: Mutex::new(None), image_worker: Mutex::new(None),
-                   export_child: Arc::new(Mutex::new(None)), comfy_cancel: Arc::new(Default::default()), busy: Mutex::new(None) }
+                   export_child: Arc::new(Mutex::new(None)), comfy_cancel: Arc::new(Default::default()), busy: Mutex::new(None),
+                   planner: Mutex::new((llm::DEFAULT_URL.into(), llm::DEFAULT_MODEL.into())) }
     }
 }
 
@@ -736,6 +741,93 @@ pub fn clean_cache(state: State<'_, AppState>) -> Result<DiskUsage> {
             }
         }
         Ok(disk_usage_of(p))
+    })
+}
+
+// --- Planification par LLM -------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct PlannerStatus {
+    pub llm: llm::LlmStatus,
+    pub model: String,
+}
+
+#[tauri::command]
+pub async fn planner_status(state: State<'_, AppState>) -> Result<PlannerStatus> {
+    let (url, model) = state.planner.lock().unwrap().clone();
+    let st = blocking(move || Ok(llm::status(&url))).await?;
+    // Repli automatique si le modèle par défaut n'est pas installé.
+    let model = if st.models.contains(&model) || st.models.is_empty() { model }
+                else if st.models.iter().any(|m| m == llm::FALLBACK_MODEL) { llm::FALLBACK_MODEL.to_string() }
+                else { st.models[0].clone() };
+    state.planner.lock().unwrap().1 = model.clone();
+    Ok(PlannerStatus { llm: st, model })
+}
+
+/// Libère la mémoire du LLM avant d'exécuter un plan (SAM 2 ou FLUX.2 vont être chargés).
+#[tauri::command]
+pub async fn release_planner(state: State<'_, AppState>) -> Result<()> {
+    let (url, model) = state.planner.lock().unwrap().clone();
+    blocking(move || { llm::release(&url, &model); Ok(()) }).await
+}
+
+#[tauri::command]
+pub fn set_planner_model(state: State<'_, AppState>, model: String) -> Result<()> {
+    if !llm::ALLOWED_MODELS.contains(&model.as_str()) {
+        return err("Modèle non proposé pour la planification.");
+    }
+    state.planner.lock().unwrap().1 = model;
+    Ok(())
+}
+
+/// État du projet transmis au LLM : uniquement des métadonnées (aucune image, aucun chemin absolu).
+fn planner_context(p: &Project) -> (serde_json::Value, plan::Context) {
+    let m = &p.manifest;
+    let pr = &m.source.probe;
+    let fps = pr.fps_num as f64 / pr.fps_den.max(1) as f64;
+    let bgs = backgrounds::list(p);
+    let state = json!({
+        "video": {"duree_totale_s": (pr.duration * 100.0).round() / 100.0, "images_par_seconde": (fps * 100.0).round() / 100.0,
+                  "format": format!("{}x{}", pr.display_width, pr.display_height),
+                  "orientation": if pr.display_height > pr.display_width { "verticale" } else { "horizontale" },
+                  "audio": pr.has_audio},
+        "extrait": {"debut_s": m.clip.start, "duree_s": m.clip.duration, "pret": m.proxy.is_some()},
+        "sujet_selectionne": !m.segmentation.prompts.is_empty(),
+        "masque": match m.segmentation.status { MaskStatus::Ready => "prêt", MaskStatus::Stale => "à recalculer", MaskStatus::None => "absent" },
+        "decor_actuel": m.composite.background.as_deref().map(|b| b.rsplit('/').next().unwrap_or("").split('.').next().unwrap_or("").to_string()),
+        "decors_disponibles": bgs.iter().take(12).map(|b| json!({"id": b.id, "source": b.source,
+            "description": b.meta["prompt"].as_str().map(|s| s.chars().take(120).collect::<String>())})).collect::<Vec<_>>(),
+        "reglages": {"echelle": m.composite.subject_scale, "luminosite": m.composite.brightness, "temperature": m.composite.temperature,
+                     "flou_decor": m.composite.bg_blur},
+    });
+    let ctx = plan::Context::from_project(p, bgs.iter().map(|b| b.id.clone()).collect());
+    (state, ctx)
+}
+
+#[tauri::command]
+pub async fn propose_plan(state: State<'_, AppState>, instruction: String, mode: Mode) -> Result<llm::PlannerResult> {
+    let _busy = BusyGuard::acquire(&state.busy, "planification")?;
+    let (url, model) = state.planner.lock().unwrap().clone();
+    let (proj_state, ctx) = with_project(&state, |p| Ok(planner_context(p)))?;
+    blocking(move || llm::propose(&url, &model, &instruction, &proj_state, &ctx, mode)).await
+}
+
+/// Recalcule prérequis et coûts après modification du plan par l'utilisateur (étapes activées,
+/// paramètres édités, mode changé). Rien n'est exécuté ici.
+#[tauri::command]
+pub fn revalidate_plan(state: State<'_, AppState>, mut plan: Plan, mode_changed: bool) -> Result<Plan> {
+    if mode_changed {
+        // Le mode fixe alors le nombre de variantes et le préréglage d'export.
+        for s in plan.steps.iter_mut() {
+            if let Some(o) = s.params.as_object_mut() {
+                if s.op == "generate_background" { o.remove("variants"); }
+                if s.op == "export" { o.remove("quality"); }
+            }
+        }
+    }
+    with_project(&state, |p| {
+        let (_, ctx) = planner_context(p);
+        Ok(plan::revalidate(plan, &ctx))
     })
 }
 

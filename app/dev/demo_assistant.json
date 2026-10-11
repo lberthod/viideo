@@ -1,0 +1,11 @@
+{
+  "background": "",
+  "start": 0,
+  "duration": 5,
+  "box": [440, 60, 910, 719],
+  "points": [[700, 180], [700, 340]],
+  "assistant": {
+    "instruction": "Place-moi dans un studio de télévision moderne aux tons bleus, cadre-moi au centre, avec un arrière-plan légèrement flou, puis exporte.",
+    "mode": "balanced"
+  }
+}

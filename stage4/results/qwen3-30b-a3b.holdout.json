@@ -1,0 +1,131 @@
+{
+  "cases": [
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Je voudrais apparaître dans une cuisine chaleureuse, légèrement floutée derrière moi.",
+      "missing": [],
+      "mode": "balanced",
+      "ok": true,
+      "rejected": [],
+      "seconds": 7.3,
+      "steps": [
+        {
+          "op": "segment_subject",
+          "params": {
+            "cleanup": true
+          },
+          "why": "Le masque n'est pas prêt, il faut détourer le sujet pour appliquer le décor."
+        },
+        {
+          "op": "generate_background",
+          "params": {
+            "empty_scene": false,
+            "prompt": "cuisine chaleureuse avec des étagères en bois, une table en chêne, lumière douce du soir, ambiance accueillante",
+            "variants": 1
+          },
+          "why": "La demande est pour une cuisine, pas un décor existant, donc générer un décor personnalisé."
+        },
+        {
+          "op": "adjust",
+          "params": {
+            "bg_blur": 15.0
+          },
+          "why": "Appliquer un flou léger derrière le sujet comme demandé."
+        },
+        {
+          "op": "harmonize",
+          "params": {},
+          "why": "Pour accorder la lumière et les couleurs du sujet à la cuisine générée."
+        },
+        {
+          "op": "export",
+          "params": {
+            "quality": "balanced"
+          },
+          "why": "Le mode demandé est équilibré, donc qualité équilibrée pour l'export."
+        }
+      ],
+      "summary": "Remplacement du décor par une cuisine chaleureuse avec flou léger derrière le sujet.",
+      "warnings": []
+    },
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Mets un fond noir et exporte le plus vite possible.",
+      "missing": [],
+      "mode": "fast",
+      "ok": true,
+      "rejected": [],
+      "seconds": 2.3,
+      "steps": [
+        {
+          "op": "segment_subject",
+          "params": {
+            "cleanup": true
+          },
+          "why": "Ajouté par l'application : le masque du sujet est nécessaire pour la suite du plan."
+        },
+        {
+          "op": "solid_background",
+          "params": {
+            "color": "#000000"
+          },
+          "why": "Fond noir demandé"
+        },
+        {
+          "op": "export",
+          "params": {
+            "quality": "fast"
+          },
+          "why": "Export rapide demandé"
+        }
+      ],
+      "summary": "Fond noir appliqué et export rapide.",
+      "warnings": []
+    },
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Rends la scène plus froide et plus sombre, comme en fin de journée d'hiver.",
+      "missing": [],
+      "mode": "balanced",
+      "ok": true,
+      "rejected": [],
+      "seconds": 2.4,
+      "steps": [
+        {
+          "op": "adjust",
+          "params": {
+            "brightness": -0.3,
+            "contrast": 1.2,
+            "temperature": -0.4
+          },
+          "why": "Pour rendre la scène plus sombre et plus froide, en ajustant la luminosité, le contraste et la température vers les teintes froides."
+        }
+      ],
+      "summary": "Ajustement de la luminosité, du contraste et de la température pour créer une ambiance hivernale sombre et froide.",
+      "warnings": []
+    },
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Ajoute une musique épique et des sous-titres.",
+      "missing": [],
+      "mode": "balanced",
+      "ok": true,
+      "rejected": [],
+      "seconds": 1.8,
+      "steps": [],
+      "summary": "La demande de musique épique et de sous-titres est hors des capacités de l'application.",
+      "warnings": [
+        "L'application ne génère pas de musique ni n'ajoute de sous-titres. Elle ne modifie que le décor derrière le sujet filmé, sans ajouter de musique, de texte ou de sous-titres.",
+        "Le plan ne contient aucune étape exécutable."
+      ]
+    }
+  ],
+  "mean_seconds": 3.45,
+  "model": "qwen3:30b-a3b",
+  "ok": 4,
+  "total": 4
+}

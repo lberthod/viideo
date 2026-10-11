@@ -1,0 +1,156 @@
+{
+  "cases": [
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Je voudrais apparaître dans une cuisine chaleureuse, légèrement floutée derrière moi.",
+      "missing": [],
+      "mode": "balanced",
+      "ok": true,
+      "rejected": [],
+      "seconds": 12.8,
+      "steps": [
+        {
+          "op": "segment_subject",
+          "params": {
+            "cleanup": true
+          },
+          "why": "Ajouté par l'application : le masque du sujet est nécessaire pour la suite du plan."
+        },
+        {
+          "op": "generate_background",
+          "params": {
+            "empty_scene": false,
+            "prompt": "cuisine chaleureuse avec des murs en bois, une grande fenêtre donnant sur un jardin, lumière douce et tamisée",
+            "variants": 1
+          },
+          "why": "La demande correspond à un décor spécifique qui n'est pas disponible dans la bibliothèque."
+        },
+        {
+          "op": "adjust",
+          "params": {
+            "bg_blur": 5.0
+          },
+          "why": "La demande indique que le décor doit être légèrement flouté."
+        },
+        {
+          "op": "harmonize",
+          "params": {},
+          "why": "Pour accorder la lumière et les couleurs du sujet au décor généré."
+        },
+        {
+          "op": "export",
+          "params": {
+            "quality": "balanced"
+          },
+          "why": "La demande ne précise pas de qualité particulière, donc on utilise le mode équilibré."
+        }
+      ],
+      "summary": "Générer un décor de cuisine chaleureuse, légèrement flouté, et exporter la vidéo avec harmonisation des couleurs.",
+      "warnings": []
+    },
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Mets un fond noir et exporte le plus vite possible.",
+      "missing": [],
+      "mode": "fast",
+      "ok": true,
+      "rejected": [],
+      "seconds": 6.6,
+      "steps": [
+        {
+          "op": "segment_subject",
+          "params": {
+            "cleanup": true
+          },
+          "why": "Ajouté par l'application : le masque du sujet est nécessaire pour la suite du plan."
+        },
+        {
+          "op": "solid_background",
+          "params": {
+            "color": "#000000"
+          },
+          "why": "La demande spécifie un fond noir, donc utiliser solid_background avec la couleur #000000."
+        },
+        {
+          "op": "export",
+          "params": {
+            "quality": "fast"
+          },
+          "why": "La demande exige une exportation rapide, donc utiliser la qualité 'fast'."
+        }
+      ],
+      "summary": "Mettre un fond noir et exporter rapidement la vidéo.",
+      "warnings": []
+    },
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Rends la scène plus froide et plus sombre, comme en fin de journée d'hiver.",
+      "missing": [],
+      "mode": "balanced",
+      "ok": true,
+      "rejected": [],
+      "seconds": 7.6,
+      "steps": [
+        {
+          "op": "segment_subject",
+          "params": {
+            "cleanup": true
+          },
+          "why": "Ajouté par l'application : le masque du sujet est nécessaire pour la suite du plan."
+        },
+        {
+          "op": "lighting",
+          "params": {
+            "preset": "night"
+          },
+          "why": "Pour créer une ambiance froide et sombre typique d'une fin de journée d'hiver."
+        },
+        {
+          "op": "adjust",
+          "params": {
+            "brightness": -0.5,
+            "temperature": -0.5
+          },
+          "why": "Ajuster la température et la luminosité pour renforcer l'effet de froid et de sombre."
+        },
+        {
+          "op": "harmonize",
+          "params": {},
+          "why": "Accorder la lumière du sujet au décor pour une transition naturelle."
+        }
+      ],
+      "summary": "La scène est rendue plus froide et plus sombre en modifiant la lumière et les couleurs.",
+      "warnings": []
+    },
+    {
+      "attempts": 1,
+      "forbidden": [],
+      "instruction": "Ajoute une musique épique et des sous-titres.",
+      "missing": [],
+      "mode": "balanced",
+      "ok": true,
+      "rejected": [],
+      "seconds": 5.7,
+      "steps": [
+        {
+          "op": "note",
+          "params": {
+            "text": "La musique et les sous-titres ne peuvent pas être ajoutés car l'application ne gère pas ces éléments."
+          },
+          "why": "L'application ne permet pas d'ajouter de musique ni de sous-titres."
+        }
+      ],
+      "summary": "La demande ne peut pas être exécutée car l'application ne gère pas l'ajout de musique ou de sous-titres.",
+      "warnings": [
+        "L'application ne permet pas d'ajouter de musique ni de sous-titres."
+      ]
+    }
+  ],
+  "mean_seconds": 8.175,
+  "model": "qwen3:8b",
+  "ok": 4,
+  "total": 4
+}
