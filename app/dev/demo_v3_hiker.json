@@ -27,5 +27,5 @@
   "light_wrap": 0.45,
   "lighting": "golden",
   "export_quality": "balanced",
-  "relight": 0.55
+  "relight": 0.9
 }

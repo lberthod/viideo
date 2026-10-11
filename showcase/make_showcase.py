@@ -28,9 +28,9 @@ EXAMPLES = [
 
 EXAMPLES_V3 = [
     ("Présentatrice, terrasse alpine", "v2_presenter_alps", "v3_presenter_alps",
-     "Relighting : lumière lue sur le décor (soleil couchant à droite, teinte chaude), intensité 0,55"),
+     "Relighting : lumière lue sur le décor (soleil couchant à droite, teinte chaude), intensité 0,9"),
     ("Randonneur, lac alpin", "v2_hiker", "v3_hiker",
-     "Relighting : lumière venant du haut (ciel), intensité 0,55 ; décor fixe ici (l'animation de la v2 n'est pas refaite)"),
+     "Relighting : lumière venant du haut (ciel), intensité 0,9 ; décor fixe ici (l'animation de la v2 n'est pas refaite)"),
 ]
 
 

@@ -184,10 +184,12 @@ pub fn encoder_args(q: &ExportQuality, videotoolbox: bool) -> Vec<&'static str> 
 ///
 /// Normale encodée n = (N + 1) / 2 × 255 ; lumière L = normalise(x, y, RELIGHT_LZ).
 /// - ombrage (0..255) = clip(Σ 2·L_c·n_c − 255·Σ L_c) = 255 × max(0, N·L) ;
-/// - gain (codé 127,5 = ×1) = 127,5 × (1 − 0,6·s) + 0,6·s·k_c × ombrage, k = couleur de la lumière
+/// - gain (codé 127,5 = ×1) = 127,5 × (1 − A·s) + A·s·k_c × ombrage, A = RELIGHT_AMP, k = couleur de la lumière
 ///   normalisée à une moyenne de 1. Un ombrage moyen (≈ 0,5) laisse l'exposition inchangée ;
 /// - sujet × gain / 127,5.
 pub const RELIGHT_LZ: f64 = 0.6;
+/// Amplitude du relighting à pleine intensité : côté éclairé jusqu'à ×1,8, côté opposé jusqu'à ×0,2.
+pub const RELIGHT_AMP: f64 = 0.8;
 
 pub struct RelightCoeffs {
     /// Coefficients (R, G, B, A) appliqués à la normale encodée (A = 255) : ombrage.
@@ -212,8 +214,8 @@ pub fn relight_coeffs(c: &Composite) -> RelightCoeffs {
     let k = light_key(&c.light_color);
     RelightCoeffs {
         shade: [2.0 * l[0], 2.0 * l[1], 2.0 * l[2], -(l[0] + l[1] + l[2])],
-        scale: k.map(|kc| 0.6 * s * kc),
-        offset: 0.5 * (1.0 - 0.6 * s),
+        scale: k.map(|kc| RELIGHT_AMP * s * kc),
+        offset: 0.5 * (1.0 - RELIGHT_AMP * s),
     }
 }
 

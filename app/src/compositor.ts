@@ -74,6 +74,7 @@ function applyColor(data: Uint8ClampedArray, c: Composite) {
 
 // --- Relighting directionnel (mêmes formules que media.rs::relight_coeffs) -----------------------
 const RELIGHT_LZ = 0.6;
+const RELIGHT_AMP = 0.8; // media.rs::RELIGHT_AMP
 
 export function lightKey(hex: string): [number, number, number] {
   const ch = (i: number) => { const v = parseInt(hex.slice(i, i + 2), 16); return Number.isFinite(v) ? v : 255; };
@@ -88,8 +89,8 @@ export function relightCoeffs(c: Composite) {
   const s = c.relight;
   return {
     shade: [2 * l[0], 2 * l[1], 2 * l[2], -(l[0] + l[1] + l[2])],
-    scale: lightKey(c.light_color).map((k) => 0.6 * s * k),
-    offset: 0.5 * (1 - 0.6 * s),
+    scale: lightKey(c.light_color).map((k) => RELIGHT_AMP * s * k),
+    offset: 0.5 * (1 - RELIGHT_AMP * s),
   };
 }
 

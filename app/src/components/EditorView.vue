@@ -219,7 +219,7 @@ async function lightFromBackground(strength?: number) {
     : await loadImage(url).catch(() => null);
   const est = estimateLight(bg);
   if (!est) return;
-  const relight = strength ?? (composite.value.relight > 0.01 ? composite.value.relight : 0.5);
+  const relight = strength ?? (composite.value.relight > 0.01 ? composite.value.relight : 0.8);
   composite.value = { ...composite.value, ...est };
   await setRelight(relight);
 }

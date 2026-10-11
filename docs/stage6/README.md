@@ -56,7 +56,7 @@ Le sujet garde la lumière de son tournage : souvent une face uniformément écl
 
 - **Lumière du décor** (« Lire la lumière du décor ») : direction = barycentre des 3 % de pixels les plus lumineux par rapport au centre ; couleur = moyenne de ces pixels. Une lumière n'arrive jamais franchement par en dessous, pour qu'un sol clair (neige, eau) n'éclaire pas le visage par le menton. Direction, hauteur et couleur restent réglables.
 - **Forme du sujet** : des normales approchées, calculées **à partir du seul masque** (`workers/vision/relight.py`). Chaque segment horizontal (tronc, bras, jambe) est vu comme un cylindre vertical ; le haut de la tête et des épaules regarde vers le haut. Un sujet coupé par le cadre ne « tourne » pas au bord de l'image. Calcul : ~0,07 s par image, mis en cache avec la clé du masque.
-- **Éclairage** : gain = 1 − 0,6·s + 1,2·s·couleur·max(0, N·L). Un ombrage moyen laisse l'exposition inchangée : le côté éclairé monte jusqu'à ×(1 + 0,6·s), le côté opposé descend jusqu'à ×(1 − 0,6·s).
+- **Éclairage** : gain = 1 − 0,8·s + 1,6·s·couleur·max(0, N·L). Un ombrage moyen laisse l'exposition inchangée : le côté éclairé monte jusqu'à ×(1 + 0,8·s), le côté opposé descend jusqu'à ×(1 − 0,8·s).
 - **Export** : deux `colorchannelmixer` (N·L puis gain, la composante alpha = 255 servant de constante) et un `blend` multiplicatif ; l'aperçu applique les mêmes formules, vérifiées des deux côtés par des tests (`cargo test`, `npm test`).
 
 ![Sans / avec relighting : la lumière du couchant vient de la droite](relighting-closeup.jpg)
