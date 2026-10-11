@@ -1,0 +1,321 @@
+<title>videeo — Étape 0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout : rapport de labo en une colonne de lecture, avec planches vidéo plus larges ; rouge « masque » réservé à ce que SAM 2 détoure */
+:root {
+  --bg: #f5f6f7;
+  --surface: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5d6670;
+  --line: #d9dde2;
+  --mask: #c8323a;
+  --mask-soft: #f6e1e2;
+  --ok: #2f7a4f;
+  --warn: #a8650f;
+  --bar-a: #9aa4ae;
+  --bar-b: #c8323a;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171b; --surface: #1c2025; --fg: #e8eaed; --muted: #9aa3ad; --line: #2e343b;
+    --mask: #ec5a61; --mask-soft: #3a2124; --ok: #6cc08f; --warn: #e0a24f; --bar-a: #5b646e; --bar-b: #ec5a61;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171b; --surface: #1c2025; --fg: #e8eaed; --muted: #9aa3ad; --line: #2e343b;
+  --mask: #ec5a61; --mask-soft: #3a2124; --ok: #6cc08f; --warn: #e0a24f; --bar-a: #5b646e; --bar-b: #ec5a61;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--body); }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 80px; display: grid; gap: 56px; }
+.prose { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); font-stretch: 85%; line-height: 1.1; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 1.7rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; }
+section { display: grid; gap: 20px; min-width: 0; }
+.eyebrow { font: 500 0.78rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.meta { font: 0.85rem/1.5 var(--mono); color: var(--muted); }
+code, .num { font-family: var(--mono); font-size: 0.9em; }
+.num { font-variant-numeric: tabular-nums; }
+a { color: inherit; text-decoration-color: var(--mask); text-underline-offset: 3px; }
+a:focus-visible, video:focus-visible { outline: 2px solid var(--mask); outline-offset: 2px; }
+
+header { display: grid; gap: 16px; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--ok); padding: 20px 22px; display: grid; gap: 10px; max-width: 78ch; }
+.verdict strong { font-family: var(--display); font-stretch: 85%; font-size: 1.25rem; }
+
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.key { background: var(--surface); padding: 18px 20px; display: grid; gap: 6px; align-content: start; }
+.key .big { font: 700 2rem/1 var(--display); font-stretch: 80%; font-variant-numeric: tabular-nums; }
+.key .big small { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
+.key p { font-size: 0.9rem; color: var(--muted); }
+
+.chart { background: var(--surface); border: 1px solid var(--line); padding: 20px; display: grid; gap: 16px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.85rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 14px; height: 10px; display: inline-block; }
+.group { display: grid; grid-template-columns: 170px 1fr; gap: 4px 14px; align-items: center; }
+.group .label { font: 500 0.85rem/1.3 var(--mono); grid-row: span 2; }
+.bar { height: 14px; position: relative; display: flex; align-items: center; }
+.bar i { display: block; height: 100%; }
+.bar b { font: 400 0.78rem var(--mono); font-variant-numeric: tabular-nums; margin-left: 8px; color: var(--muted); white-space: nowrap; }
+.axis { display: grid; grid-template-columns: 170px 1fr; gap: 14px; }
+.ticks { position: relative; height: 18px; border-top: 1px solid var(--line); font: 0.72rem var(--mono); color: var(--muted); }
+.ticks span { position: absolute; top: 4px; transform: translateX(-50%); }
+.ticks span:first-child { transform: none; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 0.75rem/1.3 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pill { display: inline-block; font: 500 0.72rem/1 var(--mono); padding: 4px 7px; border-radius: 3px; white-space: nowrap; }
+.pill.ok { color: var(--ok); border: 1px solid currentColor; }
+.pill.warn { color: var(--warn); border: 1px solid currentColor; }
+.pill.mask { color: var(--mask); background: var(--mask-soft); }
+
+.clips { display: grid; gap: 40px; }
+.clip { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.clip video { width: 100%; max-width: 100%; aspect-ratio: 16 / 9; background: #000; display: block; }
+.clip .side { display: grid; gap: 12px; min-width: 0; }
+.quad { display: grid; grid-template-columns: 1fr 1fr; font: 0.7rem/1.4 var(--mono); color: var(--muted); gap: 2px 12px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0; font-size: 0.88rem; }
+dt { color: var(--muted); }
+dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+figure { margin: 0; display: grid; gap: 8px; }
+figure img { width: 100%; display: block; border: 1px solid var(--line); }
+figcaption { font-size: 0.85rem; color: var(--muted); }
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+ul.plain { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
+ol.steps { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; }
+
+@media (max-width: 760px) {
+  .clip, .duo { grid-template-columns: 1fr; }
+  .group, .axis { grid-template-columns: 1fr; }
+  .group .label { grid-row: auto; }
+  .axis > :first-child { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">videeo · étape 0 · preuve technique</div>
+  <h1>Rapport de faisabilité sur MacBook Pro M5 Pro</h1>
+  <p class="meta">11 octobre 2026 · Apple M5 Pro, GPU 20 cœurs, 64 Go · macOS 26.6.2 · 5 clips Mixkit libres de droits</p>
+  <div class="verdict">
+    <strong>Le MVP est faisable en local, sans API payante.</strong>
+    <p>La chaîne a été testée de bout en bout : probe, proxy 720p, sélection du sujet par boîte et points, masque SAM 2.1 propagé, décor généré par FLUX.2 klein, compositing FFmpeg et export MP4. Le résultat est exploitable sur des clips courts. À condition de lancer SAM 2 en bf16, une vidéo de 5 s se segmente en moins de 25 s.</p>
+  </div>
+</header>
+
+<section aria-label="Chiffres clés">
+  <div class="keys">
+    <div class="key"><span class="eyebrow">Segmentation</span><span class="big num">6,3–7,5 <small>images/s</small></span><p>SAM 2.1 tiny, bf16 sur MPS, proxy 1280×720</p></div>
+    <div class="key"><span class="eyebrow">Gain bf16</span><span class="big num">×2,7–4,6</span><p>par rapport au fp32, masques identiques à plus de 99 %</p></div>
+    <div class="key"><span class="eyebrow">Décor</span><span class="big num">10,5 <small>s</small></span><p>image 1280×720 en 4 étapes, FLUX.2 klein 4B, pic de 24 Go</p></div>
+    <div class="key"><span class="eyebrow">Compositing + export</span><span class="big num">0,6 <small>s</small></span><p>pour 5 s de vidéo 720p, FFmpeg et libx264</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Segmentation vidéo</div>
+  <h2>La demi-précision change tout</h2>
+  <p class="prose">En fp32, SAM 2 plafonne vers 2 images/s sur MPS, et le modèle <em>small</em> n'est pas plus lent que <em>tiny</em> : le goulot n'est pas l'encodeur d'image. Sous <code>torch.autocast(bfloat16)</code>, les deux modèles passent à 6–7,5 images/s. Les masques bf16 recouvrent les masques fp32 avec un IoU moyen de 0,993 à 0,9996.</p>
+  <div class="chart" role="img" aria-label="Vitesse de propagation SAM 2 par clip et par variante, en images par seconde">
+    <div class="legend">
+      <span><i class="sw" style="background:var(--bar-a);opacity:.55"></i>tiny fp32</span>
+      <span><i class="sw" style="background:var(--bar-a)"></i>small fp32</span>
+      <span><i class="sw" style="background:var(--bar-b)"></i>tiny bf16</span>
+      <span><i class="sw" style="background:var(--bar-b);opacity:.55"></i>small bf16</span>
+    </div>
+    <div id="bars" style="display:grid;gap:14px"></div>
+    <div class="axis"><div></div><div class="ticks" id="ticks"></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Planches de diagnostic</div>
+  <h2>Cinq clips, cinq cas du brief</h2>
+  <p class="prose">Chaque vidéo montre en haut la source et le masque SAM 2.1 tiny bf16, et en bas le sujet isolé sur damier et le composite sur le décor généré. Le prompt est une boîte et 2–3 points posés sur la première image. Les mesures portent sur 5 s de chaque clip.</p>
+  <div class="clips" id="clips"></div>
+</section>
+
+<section>
+  <div class="eyebrow">Qualité des masques</div>
+  <h2>Ce que le masque fait bien, et ce qu'il ne fait pas</h2>
+  <figure>
+    <img src="assets/masks_overview.jpg" alt="Masques SAM 2 en rouge sur les clips présentatrice, bureau et marche, aux images 0, 40, 80 et 119">
+    <figcaption>Images 0, 40, 80 et 119. Le sujet est suivi sans perte, même quand l'homme retire son sac au milieu des herbes. Sur la présentatrice, le pied du pupitre reste dans le masque : il était dans la boîte de départ.</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/masks_hair_selfie.jpg" alt="Masques tiny et small sur le clip cheveux longs, et masque small sur le selfie">
+    <figcaption>Les cheveux écartés sont captés comme une masse pleine, sans transparence entre les mèches. Tiny et small donnent presque le même résultat. Sur le selfie à main levée, téléphone compris, il n'y a pas de dérive.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="eyebrow">Média</div>
+  <h2>Orientation, audio et export</h2>
+  <p class="prose">Le clip de test imite un iPhone : HEVC stocké en 1280×720 avec une matrice de rotation de 90°, plus de l'audio AAC 48 kHz, sur 8 s. Les trois encodeurs restituent un vrai portrait 720×1280, avec l'audio et sans erreur de décodage.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Export H.264 + AAC</th><th>Temps</th><th>Taille</th><th>Affichage</th><th>Écart A/V</th><th>État</th></tr></thead>
+      <tbody>
+        <tr><td>libx264 CRF 18, medium</td><td class="n">0,53 s</td><td class="n">2,67 Mo</td><td class="n">720×1280</td><td class="n">25 ms</td><td><span class="pill ok">OK</span></td></tr>
+        <tr><td>libx264 CRF 20, veryfast</td><td class="n">0,28 s</td><td class="n">2,01 Mo</td><td class="n">720×1280</td><td class="n">25 ms</td><td><span class="pill ok">OK</span></td></tr>
+        <tr><td>h264_videotoolbox q 65</td><td class="n">0,53 s</td><td class="n">1,76 Mo</td><td class="n">720×1280</td><td class="n">25 ms</td><td><span class="pill ok">OK</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="plain prose">
+    <li>FFmpeg applique la rotation au réencodage. Il faut donc <strong>lire la rotation au probe et l'écrire dans le manifeste</strong> : la largeur et la hauteur brutes trompent.</li>
+    <li>En 720p, VideoToolbox n'est pas plus rapide que libx264. Son intérêt reste à mesurer en 4K et en HEVC.</li>
+    <li>Le FFmpeg Homebrew n'a pas les filtres <code>drawtext</code>, <code>zscale</code> ni <code>libplacebo</code>. Rien de bloquant pour le MVP.</li>
+  </ul>
+</section>
+
+<section>
+  <div class="eyebrow">Décor</div>
+  <h2>FLUX.2 klein 4B, déjà sur le Mac</h2>
+  <p class="prose">Le modèle était en cache (Apache-2.0) ; seul un fichier de configuration de 1 Ko manquait. Il se charge en 6 s et génère une image 1280×720 en 4 étapes en ~10,5 s. Le pic de mémoire GPU atteint 24 Go : il faudra décharger SAM 2 ou un LLM avant de générer.</p>
+  <div class="duo">
+    <figure><img src="assets/bg_studio_loft.jpg" alt="Loft lumineux vide généré par FLUX.2 klein"><figcaption>« Loft moderne lumineux », 1280×720, 10,6 s</figcaption></figure>
+    <figure><img src="assets/bg_mountain_terrace.jpg" alt="Terrasse en bois face aux Alpes enneigées au coucher du soleil"><figcaption>« Terrasse alpine au coucher du soleil », 1280×720, 10,2 s</figcaption></figure>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Inventaire</div>
+  <h2>Ce que ton Mac a déjà pour les étapes suivantes</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Usage du brief</th><th>Déjà installé</th><th>Étape</th></tr></thead>
+      <tbody>
+        <tr><td>Décor image</td><td>FLUX.2 klein 4B, Qwen-Image-Edit (mflux), FIBO, Draw Things (FLUX.1) ; Z-Image-Turbo (incomplet dans le cache HF, présent dans Ollama)</td><td class="n">3</td></tr>
+        <tr><td>Planificateur LLM</td><td>Ollama : qwen3:8b, qwen3.5:35b-a3b… ; MLX : gemma-3-12b-it-4bit ; llama.cpp</td><td class="n">4</td></tr>
+        <tr><td>Compréhension image</td><td>qwen3-vl:30b (Ollama), Qwen3-VL-4B-Instruct-4bit (MLX)</td><td class="n">4</td></tr>
+        <tr><td>Vidéo générative</td><td>Wan2.2-TI2V-5B, LTX-2.5 (MLX), LoRA Wan2.2 lightx2v 4 étapes, SeedVR2 3B (upscale)</td><td class="n">5</td></tr>
+        <tr><td>Orchestration image et vidéo</td><td>ComfyUI 0.34.0 (<code>~/ComfyUI</code>), Comfy Desktop, nœud AppleSilicon-FP8</td><td class="n">3–5</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Décisions</div>
+  <h2>Recommandations</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Sujet</th><th>Choix recommandé</th></tr></thead>
+      <tbody>
+        <tr><td>Segmentation</td><td>SAM 2.1 <strong>tiny en bf16 sur MPS</strong>, dans un worker Python persistant (~2,4 Go de RSS). Garder <em>small</em> comme option « Qualité » seulement si un vrai clip le justifie.</td></tr>
+        <tr><td>Clips longs</td><td><span class="pill warn">À tester</span> SAM 2 charge toutes les images en mémoire (~12 Mo par image) : 900 images feraient ~11 Go. Il faut tester <code>offload_video_to_cpu</code> ou un traitement par blocs.</td></tr>
+        <tr><td>Correction du masque</td><td><span class="pill mask">MVP</span> Clics positifs et négatifs sur une image clé, puis re-propagation (cas du pupitre).</td></tr>
+        <tr><td>Rendu et export</td><td>FFmpeg CLI, libx264 par défaut, rotation stockée dans le manifeste, export atomique déjà en place.</td></tr>
+        <tr><td>Intégration</td><td>Réglages d'échelle, de position, de couleur et d'adoucissement du bord. Le matting des cheveux vient après le MVP.</td></tr>
+        <tr><td>Mémoire</td><td>Un seul modèle lourd à la fois : SAM 2 ≤ 7 Go, FLUX.2 klein ≈ 24 Go.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Suite</div>
+  <h2>Étape 1 — MVP manuel</h2>
+  <ol class="steps prose">
+    <li>Squelette Tauri 2 + Vue 3 + noyau Rust, avec un manifeste <code>project.json</code> versionné.</li>
+    <li>Worker vision en JSON Lines : <code>load_model</code>, <code>init_video</code>, <code>add_prompt</code>, <code>propagate</code> (avec progression), <code>unload</code>.</li>
+    <li>Écran : import, probe, extrait, clic ou boîte sur l'image 0, aperçu du masque, puis propagation.</li>
+    <li>Décor importé ou généré, échelle et position, compositing FFmpeg, export MP4.</li>
+  </ol>
+  <p class="prose">À faire en parallèle : tester 2–3 vrais fichiers iPhone (HEVC 4K, VFR, HDR, audio réel) et un clip de 30–60 s.</p>
+</section>
+
+<footer class="meta">
+  Scripts, mesures JSON et rapport Markdown : <code>stage0/</code> du dépôt <a href="https://github.com/lberthod/viideo">lberthod/viideo</a>. Clips : <a href="https://mixkit.co/license/#videoFree">Mixkit Stock Video Free License</a>. SAM 2.1 et FLUX.2 klein 4B : Apache-2.0.
+</footer>
+</div>
+
+<script>
+const FPS = [
+  ["A · présentatrice", 2.74, 1.79, 7.53, 6.01],
+  ["B · gestes, bureau", 1.53, 1.83, 6.74, 5.91],
+  ["C · marche, herbes", 1.45, 1.78, 6.64, 5.99],
+  ["D · cheveux longs", 1.93, 1.84, 6.40, 6.05],
+  ["E · selfie à main", 2.02, 1.98, 6.30, 6.16],
+];
+const MAX = 8;
+const styles = [
+  "background:var(--bar-a);opacity:.55", "background:var(--bar-a)",
+  "background:var(--bar-b)", "background:var(--bar-b);opacity:.55",
+];
+const fmt = v => v.toFixed(2).replace(".", ",");
+const bars = document.getElementById("bars");
+for (const [label, ...vals] of FPS) {
+  const g = document.createElement("div");
+  g.className = "group";
+  g.innerHTML = `<div class="label">${label}</div>` + vals.map((v, i) =>
+    `<div class="bar"><i style="width:${(v / MAX * 88).toFixed(1)}%;${styles[i]}"></i><b>${fmt(v)}</b></div>`).join("");
+  bars.appendChild(g);
+}
+const ticks = document.getElementById("ticks");
+for (let t = 0; t <= MAX; t += 2) {
+  const s = document.createElement("span");
+  s.style.left = (t / MAX * 88) + "%";
+  s.textContent = t === MAX ? `${t} i/s` : t;
+  ticks.appendChild(s);
+}
+
+const CLIPS = [
+  { id: "A_presenter", title: "A · Présentatrice, caméra fixe", cas: "Cas 1", src: "Mixkit 23385, 720p 25 i/s",
+    fps: "7,53", iou: "0,993 / 0,972", mem: "3,3 Go", tag: ["warn", "pupitre inclus"],
+    note: "Masque très stable. Le pied du pupitre est inclus parce qu'il était dans la boîte de départ : un point négatif le corrigerait." },
+  { id: "B_office_gestures", title: "B · Gestes au téléphone, bureau encombré", cas: "Cas 2", src: "Mixkit 45924, 720p 25 i/s",
+    fps: "6,74", iou: "0,985 / 0,946", mem: "3,0 Go", tag: ["ok", "exploitable"],
+    note: "Mains, téléphone et lunettes suivis. Tiny et small diffèrent surtout à la frontière entre le bras et le bureau." },
+  { id: "C_walking_occlusion", title: "C · Marche, occultation par les herbes", cas: "Cas 2", src: "Mixkit 16156, 720p 24 i/s",
+    fps: "6,64", iou: "0,929 / 0,837", mem: "3,0 Go", tag: ["ok", "exploitable"],
+    note: "Le sujet est suivi tout du long, y compris quand il retire son sac. L'IoU plus bas reflète le mouvement réel, pas une perte." },
+  { id: "D_long_hair", title: "D · Cheveux longs en mouvement", cas: "Cas 3", src: "Mixkit 16189, 720p 29,97 i/s",
+    fps: "6,40", iou: "0,957 / 0,799", mem: "6,8 Go", tag: ["warn", "pas de matting"],
+    note: "La silhouette est juste, mais le fond gris d'origine reste visible entre les mèches. Un vrai matting viendra après le MVP." },
+  { id: "E_selfie_handheld", title: "E · Selfie, caméra à main", cas: "Cas 4", src: "Mixkit 10442, 1080p 23,976 i/s",
+    fps: "6,30", iou: "0,973 / 0,941", mem: "4,9 Go", tag: ["ok", "exploitable"],
+    note: "Bras levé et téléphone inclus, aucune dérive malgré la caméra mobile. Le composite fixe ne suit pas le bougé de caméra." },
+];
+const clipsEl = document.getElementById("clips");
+for (const c of CLIPS) {
+  const el = document.createElement("article");
+  el.className = "clip";
+  el.innerHTML = `
+    <video src="assets/${c.id}_diag.mp4" poster="assets/${c.id}_poster.jpg" controls muted loop playsinline preload="metadata"
+      aria-label="Planche de diagnostic ${c.title}"></video>
+    <div class="side">
+      <div class="eyebrow">${c.cas} · <span class="pill ${c.tag[0]}">${c.tag[1]}</span></div>
+      <h3>${c.title}</h3>
+      <p>${c.note}</p>
+      <dl>
+        <dt>Vitesse</dt><dd>${c.fps} images/s</dd>
+        <dt>IoU consécutif</dt><dd>${c.iou}</dd>
+        <dt>Pic GPU</dt><dd>${c.mem}</dd>
+        <dt>Source</dt><dd>${c.src}</dd>
+      </dl>
+      <div class="quad"><span>↖ source</span><span>↗ masque</span><span>↙ sujet isolé</span><span>↘ composite</span></div>
+    </div>`;
+  clipsEl.appendChild(el);
+}
+</script>

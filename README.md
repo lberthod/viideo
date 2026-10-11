@@ -5,7 +5,7 @@ sans coût d'API par défaut. Spécification complète : [docs/brief.md](docs/br
 
 ## État
 
-**Étape 0 — preuve technique sur le Mac.** Rapport : [stage0/REPORT.md](stage0/REPORT.md).
+**Étape 0 — preuve technique sur le Mac.** Rapport : [stage0/REPORT.md](stage0/REPORT.md) (version web : [stage0/web/index.html](stage0/web/index.html)).
 
 ## Reproduire l'étape 0
 
