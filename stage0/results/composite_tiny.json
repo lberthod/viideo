@@ -1,0 +1,52 @@
+[
+  {
+    "clip": "A_presenter",
+    "model": "tiny",
+    "composite_s": 0.57,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/A_presenter__tiny.mp4",
+    "diag": "stage0/results/composites/A_presenter__tiny__diag.mp4",
+    "errors": ""
+  },
+  {
+    "clip": "B_office_gestures",
+    "model": "tiny",
+    "composite_s": 0.57,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/B_office_gestures__tiny.mp4",
+    "diag": "stage0/results/composites/B_office_gestures__tiny__diag.mp4",
+    "errors": ""
+  },
+  {
+    "clip": "C_walking_occlusion",
+    "model": "tiny",
+    "composite_s": 0.6,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/C_walking_occlusion__tiny.mp4",
+    "diag": "stage0/results/composites/C_walking_occlusion__tiny__diag.mp4",
+    "errors": ""
+  },
+  {
+    "clip": "D_long_hair",
+    "model": "tiny",
+    "composite_s": 0.69,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/D_long_hair__tiny.mp4",
+    "diag": "stage0/results/composites/D_long_hair__tiny__diag.mp4",
+    "errors": ""
+  },
+  {
+    "clip": "E_selfie_handheld",
+    "model": "tiny",
+    "composite_s": 0.64,
+    "ok": true,
+    "diag_ok": true,
+    "composite": "stage0/results/composites/E_selfie_handheld__tiny.mp4",
+    "diag": "stage0/results/composites/E_selfie_handheld__tiny__diag.mp4",
+    "errors": ""
+  }
+]

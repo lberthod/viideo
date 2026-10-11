@@ -1,0 +1,15 @@
+# Environnements et dépendances locales
+.venvs/
+vendor/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Poids de modèles et médias (gros fichiers, régénérables)
+models/
+clips/
+cache/
+
+# Rendus vidéo de l'étape 0 (gardés en local, publiés via le rapport)
+stage0/results/composites/*.mp4
+stage0/results/report_assets/*.mp4

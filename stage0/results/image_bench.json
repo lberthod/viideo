@@ -1,0 +1,31 @@
+{
+  "model": "black-forest-labs/FLUX.2-klein-4B",
+  "device": "mps",
+  "dtype": "bfloat16",
+  "load_s": 6.0,
+  "images": [
+    {
+      "name": "studio_loft",
+      "size": "768x432",
+      "steps": 4,
+      "seconds": 6.2,
+      "file": "stage0/results/backgrounds/studio_loft_768x432.png"
+    },
+    {
+      "name": "studio_loft",
+      "size": "1280x720",
+      "steps": 4,
+      "seconds": 10.6,
+      "file": "stage0/results/backgrounds/studio_loft_1280x720.png"
+    },
+    {
+      "name": "mountain_terrace",
+      "size": "1280x720",
+      "steps": 4,
+      "seconds": 10.2,
+      "file": "stage0/results/backgrounds/mountain_terrace_1280x720.png"
+    }
+  ],
+  "peak_rss_gb": 0.5,
+  "peak_mps_driver_gb": 24.2
+}

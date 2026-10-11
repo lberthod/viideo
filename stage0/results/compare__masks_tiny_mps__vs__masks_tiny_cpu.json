@@ -1,0 +1,10 @@
+[
+  {
+    "clip": "A_presenter",
+    "ref": "masks_tiny_mps",
+    "other": "masks_tiny_cpu",
+    "iou_mean": 1.0,
+    "iou_min": 1.0,
+    "frames_below_0.95": 0
+  }
+]

@@ -1,0 +1,57 @@
+{
+  "license": "Mixkit Stock Video Free License (https://mixkit.co/license/#videoFree)",
+  "proxy_height": 720,
+  "bench_seconds": 5,
+  "clips": [
+    {
+      "id": "A_presenter",
+      "case": 1,
+      "description": "Caméra fixe, présentatrice presque immobile, fond studio contrasté",
+      "file": "mixkit-23385.mp4",
+      "url": "https://assets.mixkit.co/videos/23385/23385-720.mp4",
+      "start": 0,
+      "box": [440, 60, 910, 720],
+      "points": [[700, 180], [700, 340]]
+    },
+    {
+      "id": "B_office_gestures",
+      "case": 2,
+      "description": "Personne assise au téléphone, gestes des mains, décor encombré",
+      "file": "mixkit-45924.mp4",
+      "url": "https://assets.mixkit.co/videos/45924/45924-720.mp4",
+      "start": 0,
+      "box": [560, 190, 860, 650],
+      "points": [[655, 290], [750, 450]]
+    },
+    {
+      "id": "C_walking_occlusion",
+      "case": 2,
+      "description": "Homme qui marche, sac à dos, occultation partielle par les herbes",
+      "file": "mixkit-16156.mp4",
+      "url": "https://assets.mixkit.co/videos/16156/16156-720.mp4",
+      "start": 4,
+      "box": [710, 205, 900, 720],
+      "points": [[790, 240], [775, 420], [805, 570]]
+    },
+    {
+      "id": "D_long_hair",
+      "case": 3,
+      "description": "Cheveux longs et fins en mouvement, fond gris uni",
+      "file": "mixkit-16189.mp4",
+      "url": "https://assets.mixkit.co/videos/16189/16189-720.mp4",
+      "start": 0,
+      "box": [420, 0, 915, 720],
+      "points": [[646, 140], [640, 450]]
+    },
+    {
+      "id": "E_selfie_handheld",
+      "case": 4,
+      "description": "Selfie sur balcon, caméra légèrement mobile, bras levé",
+      "file": "mixkit-10442.mp4",
+      "url": "https://assets.mixkit.co/videos/10442/10442-1080.mp4",
+      "start": 0,
+      "box": [320, 30, 610, 720],
+      "points": [[538, 100], [515, 265], [475, 545]]
+    }
+  ]
+}

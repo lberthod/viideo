@@ -1,0 +1,42 @@
+[
+  {
+    "clip": "A_presenter",
+    "ref": "masks_small_mps",
+    "other": "masks_small_mps_bf16",
+    "iou_mean": 0.995,
+    "iou_min": 0.9895,
+    "frames_below_0.95": 0
+  },
+  {
+    "clip": "B_office_gestures",
+    "ref": "masks_small_mps",
+    "other": "masks_small_mps_bf16",
+    "iou_mean": 0.9948,
+    "iou_min": 0.9687,
+    "frames_below_0.95": 0
+  },
+  {
+    "clip": "C_walking_occlusion",
+    "ref": "masks_small_mps",
+    "other": "masks_small_mps_bf16",
+    "iou_mean": 0.9926,
+    "iou_min": 0.9806,
+    "frames_below_0.95": 0
+  },
+  {
+    "clip": "D_long_hair",
+    "ref": "masks_small_mps",
+    "other": "masks_small_mps_bf16",
+    "iou_mean": 0.9952,
+    "iou_min": 0.962,
+    "frames_below_0.95": 0
+  },
+  {
+    "clip": "E_selfie_handheld",
+    "ref": "masks_small_mps",
+    "other": "masks_small_mps_bf16",
+    "iou_mean": 0.9981,
+    "iou_min": 0.992,
+    "frames_below_0.95": 0
+  }
+]

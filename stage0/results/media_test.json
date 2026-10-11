@@ -1,0 +1,188 @@
+{
+  "sources": [
+    {
+      "file": "mixkit-10442.mp4",
+      "duration": 8.008,
+      "size_mb": 25.42,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 8.008,
+          "width": 1920,
+          "height": 1080,
+          "fps": "24000/1001",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1920x1080"
+        }
+      ]
+    },
+    {
+      "file": "mixkit-16156.mp4",
+      "duration": 28.041667,
+      "size_mb": 11.11,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 28.041667,
+          "width": 1280,
+          "height": 720,
+          "fps": "24/1",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1280x720"
+        }
+      ]
+    },
+    {
+      "file": "mixkit-16189.mp4",
+      "duration": 19.252567,
+      "size_mb": 6.54,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 19.252567,
+          "width": 1280,
+          "height": 720,
+          "fps": "30000/1001",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1280x720"
+        }
+      ]
+    },
+    {
+      "file": "mixkit-23385.mp4",
+      "duration": 13.68,
+      "size_mb": 4.19,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 13.68,
+          "width": 1280,
+          "height": 720,
+          "fps": "25/1",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1280x720"
+        }
+      ]
+    },
+    {
+      "file": "mixkit-45924.mp4",
+      "duration": 8.6,
+      "size_mb": 2.42,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 8.6,
+          "width": 1280,
+          "height": 720,
+          "fps": "25/1",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1280x720"
+        }
+      ]
+    },
+    {
+      "file": "mixkit-4832.mp4",
+      "duration": 10.385375,
+      "size_mb": 31.09,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "duration": 10.385375,
+          "width": 1920,
+          "height": 1080,
+          "fps": "24000/1001",
+          "pix_fmt": "yuv420p",
+          "rotation": 0,
+          "display": "1920x1080"
+        }
+      ]
+    }
+  ],
+  "phone_like_create": {
+    "seconds": 0.67,
+    "ok": true,
+    "stderr": ""
+  },
+  "phone_like_probe": {
+    "file": "phone_like.mov",
+    "duration": 8.0,
+    "size_mb": 1.35,
+    "streams": [
+      {
+        "type": "video",
+        "codec": "hevc",
+        "duration": 7.974633,
+        "width": 1280,
+        "height": 720,
+        "fps": "30000/1001",
+        "pix_fmt": "yuv420p",
+        "rotation": 90,
+        "display": "720x1280"
+      },
+      {
+        "type": "audio",
+        "codec": "aac",
+        "duration": 8.0,
+        "sample_rate": "48000",
+        "channels": 1
+      }
+    ]
+  },
+  "exports": {
+    "libx264_crf18": {
+      "seconds": 0.53,
+      "ok": true,
+      "stderr": "",
+      "size_mb": 2.67,
+      "display": "720x1280",
+      "rotation_tag": 0,
+      "orientation_preserved": true,
+      "audio_present": true,
+      "duration_delta_s": 0.0,
+      "av_delta_s": 0.025,
+      "decode_errors": ""
+    },
+    "libx264_veryfast": {
+      "seconds": 0.28,
+      "ok": true,
+      "stderr": "",
+      "size_mb": 2.01,
+      "display": "720x1280",
+      "rotation_tag": 0,
+      "orientation_preserved": true,
+      "audio_present": true,
+      "duration_delta_s": 0.0,
+      "av_delta_s": 0.025,
+      "decode_errors": ""
+    },
+    "videotoolbox_h264": {
+      "seconds": 0.53,
+      "ok": true,
+      "stderr": "",
+      "size_mb": 1.76,
+      "display": "720x1280",
+      "rotation_tag": 0,
+      "orientation_preserved": true,
+      "audio_present": true,
+      "duration_delta_s": 0.0,
+      "av_delta_s": 0.025,
+      "decode_errors": ""
+    }
+  },
+  "ffmpeg_filters_missing": [
+    "drawtext",
+    "zscale",
+    "libplacebo"
+  ]
+}
