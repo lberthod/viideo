@@ -1,0 +1,2 @@
+== ltx25
+exit=0       520.67 real        22.86 user        64.13 sys          20972224512  maximum resident set size          39123127560  peak memory footprint 

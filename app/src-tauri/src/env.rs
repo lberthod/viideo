@@ -44,6 +44,8 @@ pub struct Tools {
     pub image_worker: PathBuf,
     /// Workflows ComfyUI versionnés.
     pub workflows: PathBuf,
+    /// Registre des moteurs d'animation de décor.
+    pub video_engines: PathBuf,
     /// Encodeur matériel H.264 disponible dans ce FFmpeg.
     pub videotoolbox: bool,
 }
@@ -65,6 +67,7 @@ impl Tools {
             image_python: from_env_or("VIDEEO_IMAGE_PYTHON", root.join(".venvs/image/bin/python")),
             image_worker: from_env_or("VIDEEO_IMAGE_WORKER", root.join("workers/image/worker.py")),
             workflows: from_env_or("VIDEEO_WORKFLOWS", root.join("workflows/comfyui")),
+            video_engines: from_env_or("VIDEEO_VIDEO_ENGINES", root.join("workflows/video")),
         }
     }
 }

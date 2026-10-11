@@ -2,7 +2,8 @@
 // Visionneuse d'une image du proxy : source, masque superposé ou composite, avec saisie des invites.
 import { onMounted, ref, watch } from "vue";
 import type { Composite, Prompt } from "../api";
-import { drawComposite, loadImage } from "../compositor";
+import { drawComposite, loadImage, videoFrameAt } from "../compositor";
+import { isVideoPath } from "../api";
 
 export type ViewMode = "source" | "mask" | "composite" | "split";
 export type Tool = "positive" | "negative" | "box";
@@ -17,6 +18,8 @@ const props = defineProps<{
   tool: Tool | null;
   width: number;
   height: number;
+  /** Temps de l'image courante dans l'extrait (s), pour un décor animé. */
+  time?: number;
 }>();
 const emit = defineEmits<{
   (e: "point", x: number, y: number, positive: boolean): void;
@@ -40,7 +43,9 @@ async function render() {
   try {
     const frame = await loadImage(props.frameUrl);
     const mask = props.maskUrl && props.mode !== "source" ? await loadImage(props.maskUrl).catch(() => null) : null;
-    const bg = isComposite() && props.backgroundUrl ? await loadImage(props.backgroundUrl).catch(() => null) : null;
+    const bg = !isComposite() || !props.backgroundUrl ? null
+      : isVideoPath(props.backgroundUrl) ? await videoFrameAt(props.backgroundUrl, props.time ?? 0).catch(() => null)
+      : await loadImage(props.backgroundUrl).catch(() => null);
     if (my !== token) return; // un rendu plus récent a été demandé
     const ctx = cv.getContext("2d")!;
     const { width: w, height: h } = cv;
@@ -165,7 +170,7 @@ function onUp() {
   else render();
 }
 
-watch(() => [props.frameUrl, props.maskUrl, props.backgroundUrl, props.mode, props.prompt, props.composite, props.width, props.height], render, { deep: true });
+watch(() => [props.frameUrl, props.maskUrl, props.backgroundUrl, props.mode, props.prompt, props.composite, props.width, props.height, props.time], render, { deep: true });
 onMounted(render);
 </script>
 

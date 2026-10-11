@@ -216,7 +216,7 @@ pub fn filter_graph(job: &ExportJob) -> String {
 eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}[src];\
 [1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}{edge}[m];\
 [src][m]alphamerge,scale={sw}:{sh}:flags=bicubic[fg];\
-[2:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1{bgblur},format=rgba[bg];\
+[2:v]fps={fn_}/{fd},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1{bgblur},format=rgba[bg];\
 [bg][fg]overlay=x={x}:y={y}:shortest=1:format=auto,format=yuv420p[out]",
         b = c.brightness, ct = c.contrast, sa = c.saturation,
     )
@@ -231,6 +231,10 @@ pub fn export(ffmpeg: &Path, job: &ExportJob, slot: Arc<Mutex<Option<Child>>>, m
         .arg("-i").arg(&job.src)
         .args(["-framerate", &fps, "-start_number", "0", "-i"]).arg(job.masks_dir.join("%05d.png"));
     match &job.background {
+        // Décor animé : boucle (déjà aller-retour) répétée autant que nécessaire.
+        Some(bg) if bg.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp4")) => {
+            cmd.args(["-stream_loop", "-1", "-i"]).arg(bg);
+        }
         Some(bg) => { cmd.args(["-loop", "1", "-framerate", &fps, "-i"]).arg(bg); }
         None => { cmd.args(["-f", "lavfi", "-i", &format!("color=c={}:s={}x{}:r={fps}",
                                                           job.composite.background_color.replace('#', "0x"), job.out_width, job.out_height)]); }

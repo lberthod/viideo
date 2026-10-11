@@ -5,10 +5,10 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api, errorText, fileUrl, formatBytes, formatTime, frameName, onExportProgress, onMaskProgress,
   type Composite, type DiskUsage, type ExportQuality, type ExportRecord, type MaskQuality, type Plan, type PlanStep, type Prompt, type ProjectView,
-  PLATE_SUFFIX,
+  PLATE_SUFFIX, isVideoPath,
 } from "../api";
 import AssistantPanel, { type StepState } from "./AssistantPanel.vue";
-import { framing, harmonize, LIGHTING, loadImage, preload, subjectBounds, type FramingPreset } from "../compositor";
+import { framing, harmonize, LIGHTING, loadImage, preload, subjectBounds, videoFrameAt, type FramingPreset } from "../compositor";
 import BackgroundLibrary from "./BackgroundLibrary.vue";
 import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
 
@@ -209,7 +209,8 @@ async function autoHarmonize() {
   await run(async () => {
     const [f, mk, bg] = await Promise.all([
       loadImage(frameUrl.value!), loadImage(maskUrl.value!),
-      backgroundUrl.value ? loadImage(backgroundUrl.value) : Promise.resolve(null),
+      !backgroundUrl.value ? Promise.resolve(null)
+        : isVideoPath(backgroundUrl.value) ? videoFrameAt(backgroundUrl.value, frame.value / fps.value) : loadImage(backgroundUrl.value),
     ]);
     composite.value = { ...composite.value, ...harmonize(f, mk, bg, composite.value) };
   });
@@ -388,6 +389,8 @@ interface DemoSpec {
   generate_prompt?: string; framing?: FramingPreset; lighting?: string;
   /** Étape 4 : demande en langage naturel exécutée par l'assistant. */
   assistant?: { instruction: string; mode: "fast" | "balanced" | "quality" };
+  /** Étape 5 : anime le décor choisi (moteur du registre workflows/video/engines.json). */
+  animate?: { engine: string; seconds: number; prompt?: string; zones?: [number, number][] };
 }
 async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
@@ -418,6 +421,13 @@ async function runDemo(spec: DemoSpec) {
     await library.value?.refresh();
   } else {
     onLibraryApplied(await api.setBackground(spec.background));
+  }
+  if (spec.animate) {
+    const a = spec.animate;
+    const item = await api.animateBackground(a.engine, a.prompt ?? "Locked camera, no camera movement. Water, clouds and vegetation move gently and naturally. Preserve every detail, material, and lighting exactly, motion slow and continuous.", a.seconds, 42001, a.zones ?? null);
+    onLibraryApplied(await api.selectBackground(item.path));
+    await library.value?.refresh();
+    await api.devLog(`DEMO animated ${item.meta.seconds}s`);
   }
   composite.value = { ...composite.value, edge: 0.1 };
   mode.value = "composite"; await pause(500);
@@ -495,7 +505,7 @@ function stepState(id: Step) {
         <FrameViewer
           :frame-url="frameUrl" :mask-url="maskUrl" :background-url="backgroundUrl" :mode="mode"
           :composite="composite" :prompt="currentPrompt" :tool="step === 'subject' ? tool : null"
-          :width="proxy?.width ?? 1280" :height="proxy?.height ?? 720"
+          :width="proxy?.width ?? 1280" :height="proxy?.height ?? 720" :time="frame / fps"
           @point="onPoint" @box="onBox"
         />
         <div v-if="frames" class="timeline">

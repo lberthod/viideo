@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "description": "Moteurs d'animation de décor (image fixe -> plan court, caméra fixe). Commandes reprises de ~/ai-video/creation_video.md. Exécutées sans shell, par liste d'arguments ; {ai_video} = dossier des outils (VIDEEO_AI_VIDEO, défaut ~/ai-video).",
+  "engines": [
+    {
+      "id": "kenburns",
+      "version": 1,
+      "title": "Ken Burns (zoom lent, sans IA)",
+      "kind": "builtin",
+      "license": "aucun modèle",
+      "tested": true,
+      "frames_rule": "any",
+      "max_frames": 2400,
+      "fps": 24,
+      "cost": {
+        "load_s": 0,
+        "s_per_frame": 0.004,
+        "peak_gb": 0.4
+      },
+      "notes": "Instantané et jamais en échec, mais c'est un mouvement de caméra : à garder très léger derrière un sujet filmé caméra fixe."
+    },
+    {
+      "id": "sulphur2",
+      "version": 1,
+      "title": "Sulphur-2 (LTX-2.3 distillé, q4)",
+      "kind": "command",
+      "license": "LTX-2.x Community License (gratuit sous 10 M$ de CA annuel ; usage commercial au-delà soumis à licence payante)",
+      "tested": true,
+      "program": "{ai_video}/ltx-2-mlx/.venv/bin/ltx-2-mlx",
+      "args": [
+        "generate",
+        "--image",
+        "{image}",
+        "--prompt",
+        "{prompt}",
+        "--distilled",
+        "--model",
+        "{ai_video}/models/sulphur-2-distill-mlx-q4",
+        "--frame-rate",
+        "24",
+        "-H",
+        "{height}",
+        "-W",
+        "{width}",
+        "-f",
+        "{frames}",
+        "--seed",
+        "{seed}",
+        "-o",
+        "{out}"
+      ],
+      "requires": [
+        "{ai_video}/models/sulphur-2-distill-mlx-q4"
+      ],
+      "frames_rule": "8k+1",
+      "max_frames": 121,
+      "fps": 24,
+      "align": 32,
+      "cost": {
+        "load_s": 0,
+        "s_per_frame": 3.6,
+        "peak_gb": 53
+      },
+      "notes": "Banc étape 5 : 437 s pour 121 images 1024×576, pic 53 Go. Mouvement local réel, caméra quasi fixe (10 px de dérive sur 5 s) mais le premier plan se modifie : utiliser le mode zones (cinémagraphe). Produit aussi une piste audio, ignorée."
+    },
+    {
+      "id": "ltx25",
+      "version": 1,
+      "title": "LTX-2.5 (q8, fork xocialize)",
+      "kind": "command",
+      "license": "LTX-2.x Community License (gratuit sous 10 M$ de CA annuel ; usage commercial au-delà soumis à licence payante)",
+      "tested": true,
+      "program": "{ai_video}/ltx-2-mlx-xocialize/.venv/bin/ltx-2-mlx",
+      "args": [
+        "generate",
+        "--image",
+        "{image}",
+        "--prompt",
+        "{prompt}",
+        "--distilled",
+        "--model",
+        "{ai_video}/models/ltx-2.5-mlx-q8",
+        "--frame-rate",
+        "24",
+        "-H",
+        "{height}",
+        "-W",
+        "{width}",
+        "-f",
+        "{frames}",
+        "--seed",
+        "{seed}",
+        "-o",
+        "{out}"
+      ],
+      "requires": [
+        "{ai_video}/models/ltx-2.5-mlx-q8"
+      ],
+      "frames_rule": "8k+1",
+      "max_frames": 121,
+      "fps": 24,
+      "align": 32,
+      "cost": {
+        "load_s": 0,
+        "s_per_frame": 4.3,
+        "peak_gb": 39
+      },
+      "notes": "Banc étape 5 : 521 s pour 121 images 1024×576, pic 39 Go. Plus de mouvement mais la caméra avance (51 px de dérive) et le premier plan est réinventé malgré « locked camera » : seulement en mode zones."
+    }
+  ],
+  "excluded": [
+    {
+      "id": "wan22",
+      "title": "Wan 2.2 TI2V 5B (q4)",
+      "reason": "Retiré à la demande de l'utilisateur : trop lent sur Mac (≈ 45 s par étape, ≈ 30 min pour 49 images en 1024×576 ; 722 s en 576×1024 dans ~/ai-video/logs_wan22_test.log) pour un gain inutile ici (son point fort est le mouvement de caméra)."
+    }
+  ]
+}

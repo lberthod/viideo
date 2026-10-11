@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::backgrounds::{self, BackgroundItem};
 use crate::comfy;
 use crate::llm;
+use crate::video;
 use crate::plan::{self, Mode, Plan};
 use crate::env::{self, Tools, ToolStatus};
 use crate::error::{err, AppError, Result};
@@ -28,6 +29,8 @@ pub struct AppState {
     /// un seul modèle lourd en mémoire (SAM 2 ≤ 7 Go, FLUX.2 klein ≈ 24 Go).
     pub image_worker: Mutex<Option<Arc<Worker>>>,
     pub export_child: Arc<Mutex<Option<Child>>>,
+    /// Processus d'animation de décor en cours (moteur vidéo).
+    pub video_child: Arc<Mutex<Option<Child>>>,
     /// Annulation d'une génération via ComfyUI.
     pub comfy_cancel: Arc<std::sync::atomic::AtomicBool>,
     /// Une seule tâche lourde à la fois (propagation, génération ou export).
@@ -39,7 +42,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         AppState { tools: Tools::detect(), project: Mutex::new(None), worker: Mutex::new(None), image_worker: Mutex::new(None),
-                   export_child: Arc::new(Mutex::new(None)), comfy_cancel: Arc::new(Default::default()), busy: Mutex::new(None),
+                   export_child: Arc::new(Mutex::new(None)), video_child: Arc::new(Mutex::new(None)), comfy_cancel: Arc::new(Default::default()), busy: Mutex::new(None),
                    planner: Mutex::new((llm::DEFAULT_URL.into(), llm::DEFAULT_MODEL.into())) }
     }
 }
@@ -395,6 +398,9 @@ pub fn cancel_job(state: State<'_, AppState>) -> Result<()> {
     }
     state.comfy_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(child) = state.export_child.lock().unwrap().as_mut() {
+        let _ = child.kill();
+    }
+    if let Some(child) = state.video_child.lock().unwrap().as_mut() {
         let _ = child.kill();
     }
     Ok(())
@@ -828,6 +834,139 @@ pub fn revalidate_plan(state: State<'_, AppState>, mut plan: Plan, mode_changed:
     with_project(&state, |p| {
         let (_, ctx) = planner_context(p);
         Ok(plan::revalidate(plan, &ctx))
+    })
+}
+
+// --- Décor animé (étape 5, expérimental) ----------------------------------------------------
+
+#[derive(Serialize)]
+pub struct VideoEngines {
+    pub engines: Vec<video::EngineStatus>,
+    /// Durée à couvrir (extrait) et taille de génération pour ce projet.
+    pub clip_seconds: f64,
+    pub gen_width: u32,
+    pub gen_height: u32,
+}
+
+#[tauri::command]
+pub async fn video_engines(state: State<'_, AppState>) -> Result<VideoEngines> {
+    let dir = state.tools.video_engines.clone();
+    let (secs, (ow, oh)) = with_project(&state, |p| {
+        let pr = &p.manifest.source.probe;
+        Ok((p.manifest.clip.duration, media::output_size(pr.display_width, pr.display_height)))
+    })?;
+    blocking(move || {
+        let engines = video::load(&dir)?;
+        let (gw, gh) = video::gen_size(ow, oh, 32);
+        Ok(VideoEngines { engines: video::status(&engines), clip_seconds: secs, gen_width: gw, gen_height: gh })
+    }).await
+}
+
+/// Anime le décor fixe courant : plan court généré par le moteur, puis boucle aller-retour.
+/// Tous les autres modèles sont déchargés avant (pic mesuré jusqu'à ~53 Go pour Sulphur-2).
+#[tauri::command]
+pub async fn animate_background(app: AppHandle, state: State<'_, AppState>, engine: String, prompt: String, seconds: f64, seed: Option<u32>,
+                                zones: Option<Vec<[f64; 2]>>) -> Result<BackgroundItem> {
+    let zones = zones.unwrap_or_default();
+    if zones.len() > 8 || zones.iter().any(|[x, y]| !(0.0..=1.0).contains(x) || !(0.0..=1.0).contains(y)) {
+        return err("Zones invalides (8 points au maximum, coordonnées entre 0 et 1).");
+    }
+    let _busy = BusyGuard::acquire(&state.busy, "animation du décor")?;
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() || prompt.chars().count() > 1000 {
+        return err("Décrivez le mouvement voulu (1 000 caractères au maximum).");
+    }
+    if !(1.0..=10.0).contains(&seconds) {
+        return err("Durée du plan animé : entre 1 et 10 secondes.");
+    }
+    let engines = video::load(&state.tools.video_engines)?;
+    let eng = engines.into_iter().find(|e| e.id == engine).ok_or_else(|| AppError::Msg(format!("Moteur inconnu : {engine}")))?;
+    let (still, still_rel, (ow, oh), out) = with_project(&state, |p| {
+        let rel = p.manifest.composite.background.clone().ok_or_else(|| AppError::Msg("Choisissez d'abord un décor fixe à animer.".into()))?;
+        if backgrounds::is_video(&rel) {
+            return err("Ce décor est déjà animé : choisissez son image d'origine.");
+        }
+        let pr = &p.manifest.source.probe;
+        let seed_v = seed.unwrap_or_else(|| chrono::Local::now().timestamp_subsec_nanos() & 0x00FF_FFFF);
+        Ok((p.resolve(&rel)?, rel, media::output_size(pr.display_width, pr.display_height), backgrounds::new_animated(p, &eng.id, seed_v).map(|o| (o, seed_v))?))
+    })?;
+    let ((rel, dest, raw), seed_v) = out;
+    // Un seul modèle lourd : on libère SAM 2, FLUX.2 et le LLM.
+    replace_worker(&state);
+    let (url, model) = state.planner.lock().unwrap().clone();
+    blocking(move || { llm::release(&url, &model); Ok(()) }).await?;
+
+    let (gw, gh) = video::gen_size(ow, oh, eng.align);
+    let frames = video::frame_count(&eng.frames_rule, seconds, eng.fps, eng.max_frames);
+    // L'image source est mise au format exact de génération (recadrage « cover »).
+    let still_fit = raw.with_file_name(format!("{}_still.png", raw.file_stem().unwrap().to_string_lossy()));
+    let ffmpeg = state.tools.ffmpeg.clone();
+    {
+        let (ffm, s_in, s_out) = (ffmpeg.clone(), still.clone(), still_fit.clone());
+        blocking(move || {
+            let o = std::process::Command::new(&ffm).args(["-v", "error", "-y", "-i"]).arg(&s_in)
+                .args(["-vf", &format!("scale={gw}:{gh}:force_original_aspect_ratio=increase,crop={gw}:{gh}")]).arg(&s_out).output()?;
+            if o.status.success() { Ok(()) } else { err(format!("Préparation de l'image impossible : {}", String::from_utf8_lossy(&o.stderr))) }
+        }).await?;
+    }
+    // Cinémagraphe : chaque point désigne une zone (eau, ciel…) détourée par SAM 2 sur le décor fixe.
+    // On le fait avant la génération, puis on décharge SAM 2 pour laisser la mémoire au moteur vidéo.
+    let mut zone_masks: Vec<PathBuf> = Vec::new();
+    if !zones.is_empty() {
+        let zone_dir = raw.with_file_name(format!("{}_zones", raw.file_stem().unwrap().to_string_lossy()));
+        let frames_dir = zone_dir.join("frames");
+        std::fs::create_dir_all(&frames_dir)?;
+        {
+            let (ffm, s_in, jpg) = (ffmpeg.clone(), still_fit.clone(), frames_dir.join("00000.jpg"));
+            blocking(move || {
+                let o = std::process::Command::new(&ffm).args(["-v", "error", "-y", "-i"]).arg(&s_in).args(["-q:v", "2"]).arg(&jpg).output()?;
+                if o.status.success() { Ok(()) } else { err("Préparation des zones impossible.") }
+            }).await?;
+        }
+        let w = worker_for(&app).await?;
+        for (i, [x, y]) in zones.iter().enumerate() {
+            let out_png = zone_dir.join(format!("zone_{i}.png"));
+            let req = json!({"frames_dir": frames_dir, "frame": 0, "out_png": out_png,
+                             "prompts": [{"frame": 0, "points": [{"x": x * gw as f64, "y": y * gh as f64, "positive": true}]}]});
+            let w2 = w.clone();
+            blocking(move || w2.request("preview", req)).await?;
+            zone_masks.push(out_png);
+        }
+        stop_vision_worker(&state);
+    }
+    let job = video::Job { image: still_fit.clone(), prompt: prompt.clone(), frames, width: gw, height: gh, seed: seed_v, out: raw.clone() };
+    let slot = state.video_child.clone();
+    let started = std::time::Instant::now();
+    let (eng2, ffm2, app2) = (eng.clone(), ffmpeg.clone(), app.clone());
+    let result = blocking(move || video::run(&eng2, &ffm2, &job, slot, |f| { let _ = app2.emit("video-progress", json!({"fraction": f})); })).await;
+    let cleanup = |still_fit: &Path, raw: &Path, masks: &[PathBuf]| {
+        let _ = std::fs::remove_file(still_fit);
+        let _ = std::fs::remove_file(raw);
+        if let Some(d) = masks.first().and_then(|m| m.parent()) {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    };
+    if let Err(e) = result {
+        cleanup(&still_fit, &raw, &zone_masks);
+        return Err(e);
+    }
+    let gen_seconds = started.elapsed().as_secs_f64();
+    let (ffm3, raw2, dest2, still2, masks2) = (ffmpeg.clone(), raw.clone(), dest.clone(), still_fit.clone(), zone_masks.clone());
+    let fps_e = eng.fps;
+    let looped = blocking(move || video::make_loop(&ffm3, &raw2, &dest2, &video::LoopSpec {
+        width: gw, height: gh, fps: fps_e, still: Some(&still2), zones: &masks2 })).await;
+    cleanup(&still_fit, &raw, &zone_masks);
+    looped?;
+    let meta = json!({
+        "source": "animated", "engine": eng.id, "engine_version": eng.version, "engine_title": eng.title,
+        "engine_tested": eng.tested, "license": eng.license, "motion_prompt": prompt, "seed": seed_v,
+        "frames": frames, "width": gw, "height": gh, "fps": eng.fps, "loop": "aller-retour",
+        "zones": zones, "mode": if zones.is_empty() { "plan entier" } else { "cinémagraphe (zones animées, reste fixe)" },
+        "seconds": (gen_seconds * 10.0).round() / 10.0, "from_still": still_rel, "created_at": project::now(),
+    });
+    backgrounds::write_meta(&dest, &meta)?;
+    with_project(&state, |p| {
+        backgrounds::list(p).into_iter().find(|b| b.path == rel).ok_or_else(|| AppError::Msg("Décor animé introuvable après création.".into()))
     })
 }
 

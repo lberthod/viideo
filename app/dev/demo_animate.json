@@ -1,0 +1,42 @@
+{
+  "background": "/Users/loicberthod/Desktop/Coding/videeo/stage5/results/still_alpine.png",
+  "start": 4,
+  "duration": 5,
+  "box": [
+    710,
+    205,
+    900,
+    719
+  ],
+  "points": [
+    [
+      790,
+      240
+    ],
+    [
+      775,
+      420
+    ],
+    [
+      805,
+      570
+    ]
+  ],
+  "animate": {
+    "engine": "sulphur2",
+    "seconds": 5,
+    "zones": [
+      [
+        0.5,
+        0.57
+      ],
+      [
+        0.3,
+        0.035
+      ]
+    ]
+  },
+  "framing": "third-left",
+  "lighting": "golden",
+  "export_quality": "balanced"
+}

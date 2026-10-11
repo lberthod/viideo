@@ -22,9 +22,10 @@ export interface Composite {
 export interface GenerationSettings { backend: string; comfy_url: string }
 
 export interface BackgroundItem {
-  id: string; path: string; abs_path: string; source: "imported" | "generated"; created_at: string;
+  id: string; path: string; abs_path: string; source: "imported" | "generated" | "animated"; kind: "image" | "video"; created_at: string;
   meta: { prompt?: string; seed?: number; model?: string; backend?: string; workflow?: string; workflow_version?: number;
-          workflow_tested?: boolean; license?: string; seconds?: number; width?: number; height?: number; original_name?: string };
+          workflow_tested?: boolean; license?: string; seconds?: number; width?: number; height?: number; original_name?: string;
+          engine?: string; engine_title?: string; engine_tested?: boolean; motion_prompt?: string; frames?: number; fps?: number; from_still?: string };
 }
 
 export interface WorkflowStatus { id: string; version: number; title: string; description: string; tested: boolean; ready: boolean; problems: string[] }
@@ -46,6 +47,14 @@ export interface MaskQuality {
   flagged: FlaggedFrame[];
   frames: FrameQuality[];
 }
+
+export interface VideoEngine {
+  id: string; version: number; title: string; kind: string; license: string; tested: boolean;
+  frames_rule: string; max_frames: number; fps: number; notes: string;
+  cost: { load_s: number; s_per_frame: number; peak_gb: number };
+  available: boolean; problems: string[];
+}
+export interface VideoEngines { engines: VideoEngine[]; clip_seconds: number; gen_width: number; gen_height: number }
 
 export type PlanMode = "fast" | "balanced" | "quality";
 export interface PlanStep {
@@ -123,6 +132,9 @@ export const api = {
   deleteBackground: (rel: string) => invoke<BackgroundItem[]>("delete_background", { rel }),
   imageBackends: () => invoke<ImageBackends>("image_backends"),
   setGeneration: (settings: GenerationSettings) => invoke<ProjectView>("set_generation", { settings }),
+  videoEngines: () => invoke<VideoEngines>("video_engines"),
+  animateBackground: (engine: string, prompt: string, seconds: number, seed: number | null, zones: [number, number][] | null) =>
+    invoke<BackgroundItem>("animate_background", { engine, prompt, seconds, seed, zones }),
   plannerStatus: () => invoke<PlannerStatus>("planner_status"),
   setPlannerModel: (model: string) => invoke<void>("set_planner_model", { model }),
   proposePlan: (instruction: string, mode: PlanMode) => invoke<PlannerResult>("propose_plan", { instruction, mode }),
@@ -139,6 +151,12 @@ export function onMaskProgress(cb: (done: number, total: number) => void): Promi
 export function onImageProgress(cb: (p: { index?: number; count?: number; done: number; total: number }) => void): Promise<UnlistenFn> {
   return listen<{ index?: number; count?: number; done: number; total: number }>("image-progress", (e) => cb(e.payload));
 }
+
+export function onVideoProgress(cb: (fraction: number) => void): Promise<UnlistenFn> {
+  return listen<{ fraction: number }>("video-progress", (e) => cb(e.payload.fraction));
+}
+
+export const isVideoPath = (p: string | null | undefined) => !!p && /\.mp4$/i.test(p);
 
 export function onExportProgress(cb: (fraction: number) => void): Promise<UnlistenFn> {
   return listen<{ fraction: number }>("export-progress", (e) => cb(e.payload.fraction));

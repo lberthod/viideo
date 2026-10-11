@@ -1,6 +1,7 @@
 mod backgrounds;
 mod comfy;
 mod commands;
+mod video;
 mod llm;
 mod plan;
 mod env;
@@ -50,6 +51,8 @@ pub fn run() {
             commands::propose_plan,
             commands::revalidate_plan,
             commands::release_planner,
+            commands::video_engines,
+            commands::animate_background,
             commands::mask_quality,
             commands::set_cleanup,
             commands::set_export_quality,
@@ -63,6 +66,11 @@ pub fn run() {
                 let workers = [state.worker.lock().unwrap().take(), state.image_worker.lock().unwrap().take()];
                 for w in workers.into_iter().flatten() {
                     w.shutdown();
+                }
+                // Un moteur vidéo peut tourner plusieurs minutes : on ne le laisse pas orphelin.
+                let child = state.video_child.lock().unwrap().take();
+                if let Some(mut c) = child {
+                    let _ = c.kill();
                 }
             }
         })

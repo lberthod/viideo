@@ -22,6 +22,36 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
   return p;
 }
 
+/** Décor animé : un élément vidéo par URL, positionné au temps demandé (boucle). */
+const videos = new Map<string, HTMLVideoElement>();
+export async function videoFrameAt(url: string, seconds: number): Promise<HTMLVideoElement> {
+  let v = videos.get(url);
+  if (!v) {
+    v = document.createElement("video");
+    v.crossOrigin = "anonymous";
+    v.muted = true;
+    v.preload = "auto";
+    v.src = url;
+    videos.set(url, v);
+    await new Promise<void>((resolve, reject) => {
+      v!.addEventListener("loadeddata", () => resolve(), { once: true });
+      v!.addEventListener("error", () => { videos.delete(url); reject(new Error(`vidéo illisible : ${url}`)); }, { once: true });
+    });
+  }
+  const t = v.duration > 0 ? seconds % v.duration : 0;
+  if (Math.abs(v.currentTime - t) > 0.001) {
+    await new Promise<void>((resolve) => {
+      v!.addEventListener("seeked", () => resolve(), { once: true });
+      v!.currentTime = t;
+    });
+  }
+  return v;
+}
+
+type Drawable = HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
+const dims = (d: Drawable) => d instanceof HTMLVideoElement ? [d.videoWidth, d.videoHeight]
+  : d instanceof HTMLImageElement ? [d.naturalWidth, d.naturalHeight] : [d.width, d.height];
+
 /** Précharge des images sans attendre (lecture fluide). */
 export function preload(urls: string[]) {
   for (const u of urls) loadImage(u).catch(() => undefined);
@@ -73,9 +103,8 @@ export function cutout(frame: HTMLImageElement, mask: HTMLImageElement, c: Compo
   return work;
 }
 
-export function drawCover(ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, w: number, h: number) {
-  const iw = (img as HTMLImageElement).naturalWidth || img.width;
-  const ih = (img as HTMLImageElement).naturalHeight || img.height;
+export function drawCover(ctx: CanvasRenderingContext2D, img: Drawable, w: number, h: number) {
+  const [iw, ih] = dims(img);
   const k = Math.max(w / iw, h / ih);
   const dw = iw * k, dh = ih * k;
   ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
@@ -83,7 +112,7 @@ export function drawCover(ctx: CanvasRenderingContext2D, img: CanvasImageSource 
 
 export function drawComposite(
   ctx: CanvasRenderingContext2D, w: number, h: number,
-  frame: HTMLImageElement, mask: HTMLImageElement, bg: HTMLImageElement | null, c: Composite,
+  frame: HTMLImageElement, mask: HTMLImageElement, bg: Drawable | null, c: Composite,
 ) {
   if (bg) {
     // Flou du décor exprimé pour 720 px de haut (media.rs : gblur mis à l'échelle de la sortie).
@@ -119,7 +148,7 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
  * de lumière et de couleur entre le sujet et le décor, avec des bornes serrées. Un décor très clair
  * ou très saturé ne doit pas délaver ni brûler le sujet ; l'utilisateur affine ensuite à la main.
  */
-export function harmonize(frame: HTMLImageElement, mask: HTMLImageElement, bg: HTMLImageElement | null, c: Composite): Partial<Composite> {
+export function harmonize(frame: HTMLImageElement, mask: HTMLImageElement, bg: Drawable | null, c: Composite): Partial<Composite> {
   const w = frame.naturalWidth, h = frame.naturalHeight;
   const neutral = { ...c, brightness: 0, contrast: 1, saturation: 1, temperature: 0, edge: 0, feather: 0 };
   const m = maskAlpha(mask, w, h, neutral);

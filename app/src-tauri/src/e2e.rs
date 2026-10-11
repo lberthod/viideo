@@ -203,3 +203,44 @@ fn planner_bench() {
             "mean_seconds": secs / cases.len() as f64, "cases": results})).unwrap()).unwrap();
     }
 }
+
+/// Cinémagraphe sur un plan déjà généré (sans relancer de moteur vidéo) :
+///   VIDEEO_E2E_RAW=../../stage5/results/clips/sulphur2.mp4 VIDEEO_E2E_STILL=../../stage5/results/still_1024x576.png \
+///   VIDEEO_E2E_OUT=../../stage5/results/clips/sulphur2_cinemagraph.mp4 cargo test e2e_cinemagraph -- --ignored --nocapture
+#[test]
+#[ignore]
+fn e2e_cinemagraph() {
+    use crate::video;
+    let raw = PathBuf::from(std::env::var("VIDEEO_E2E_RAW").unwrap()).canonicalize().unwrap();
+    let still = PathBuf::from(std::env::var("VIDEEO_E2E_STILL").unwrap()).canonicalize().unwrap();
+    let out = PathBuf::from(std::env::var("VIDEEO_E2E_OUT").unwrap());
+    let tools = Tools::detect();
+    let tmp = tempfile::tempdir().unwrap();
+    let frames = tmp.path().join("frames");
+    std::fs::create_dir_all(&frames).unwrap();
+    std::process::Command::new(&tools.ffmpeg).args(["-v", "error", "-y", "-i"]).arg(&still).args(["-q:v", "2"])
+        .arg(frames.join("00000.jpg")).status().unwrap();
+    let w = Worker::spawn(&tools, tmp.path(), |_| {}).unwrap();
+    w.request("load_model", json!({"model": "tiny", "dtype": "bf16"})).unwrap();
+    // Zones : le lac et le ciel (coordonnées dans l'image 1024×576).
+    let mut masks = Vec::new();
+    for (i, (x, y)) in [(512.0, 330.0), (300.0, 20.0)].iter().enumerate() {
+        let png = tmp.path().join(format!("zone_{i}.png"));
+        let r = w.request("preview", json!({"frames_dir": frames, "frame": 0, "out_png": png,
+            "prompts": [{"frame": 0, "points": [{"x": x, "y": y, "positive": true}]}]})).unwrap();
+        println!("zone {i} : {:.1} % de l'image", r["area_pct"].as_f64().unwrap());
+        masks.push(png);
+    }
+    w.shutdown();
+    let t0 = std::time::Instant::now();
+    video::make_loop(&tools.ffmpeg, &raw, &out, &video::LoopSpec { width: 1024, height: 576, fps: 24, still: Some(&still), zones: &masks }).unwrap();
+    let plain = out.with_file_name("sulphur2_loop.mp4");
+    video::make_loop(&tools.ffmpeg, &raw, &plain, &video::LoopSpec { width: 1024, height: 576, fps: 24, still: None, zones: &[] }).unwrap();
+    println!("boucles créées en {:.1} s", t0.elapsed().as_secs_f64());
+    for m in &masks {
+        std::fs::copy(m, out.with_file_name(m.file_name().unwrap())).unwrap();
+    }
+    let p = crate::media::probe(&tools.ffprobe, &out).unwrap();
+    println!("cinémagraphe {}x{} {:.2} s", p.width, p.height, p.duration);
+    assert!((p.duration - 241.0 / 24.0).abs() < 0.1, "2N−1 images en aller-retour");
+}

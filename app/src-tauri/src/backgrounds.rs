@@ -14,6 +14,12 @@ use crate::project::{self, Project};
 
 pub const DIR: &str = "assets/backgrounds";
 pub const IMAGE_EXT: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+/// Décors animés (étape 5) : boucles MP4 produites par `video::make_loop`.
+pub const VIDEO_EXT: [&str; 1] = ["mp4"];
+
+pub fn is_video(rel: &str) -> bool {
+    rel.rsplit('.').next().is_some_and(|e| VIDEO_EXT.contains(&e.to_lowercase().as_str()))
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BackgroundItem {
@@ -22,6 +28,8 @@ pub struct BackgroundItem {
     pub path: String,
     pub abs_path: String,
     pub source: String,
+    /// "image" ou "video" (décor animé).
+    pub kind: String,
     pub created_at: String,
     pub meta: Value,
 }
@@ -37,7 +45,9 @@ pub fn list(p: &Project) -> Vec<BackgroundItem> {
         for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let path = e.path();
             let ext = path.extension().and_then(|x| x.to_str()).map(|x| x.to_lowercase()).unwrap_or_default();
-            if !IMAGE_EXT.contains(&ext.as_str()) || path.to_string_lossy().contains(".tmp.") {
+            let in_library = rel_dir == DIR;
+            let accepted = IMAGE_EXT.contains(&ext.as_str()) || (in_library && VIDEO_EXT.contains(&ext.as_str()));
+            if !accepted || path.to_string_lossy().contains(".tmp.") || path.to_string_lossy().contains(".part.") || path.to_string_lossy().contains("_raw.") {
                 continue;
             }
             let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -51,6 +61,7 @@ pub fn list(p: &Project) -> Vec<BackgroundItem> {
                 path: format!("{rel_dir}/{name}"),
                 abs_path: path.display().to_string(),
                 source: meta["source"].as_str().unwrap_or("imported").to_string(),
+                kind: if VIDEO_EXT.contains(&ext.as_str()) { "video".into() } else { "image".into() },
                 created_at,
                 meta,
             });
@@ -107,6 +118,16 @@ pub fn delete(p: &Project, rel: &str) -> Result<()> {
     fs::remove_file(&path)?;
     let _ = fs::remove_file(meta_path(&path));
     Ok(())
+}
+
+/// Emplacement d'un nouveau décor animé (boucle finale) et de la sortie brute du moteur.
+pub fn new_animated(p: &Project, engine: &str, seed: u32) -> Result<(String, PathBuf, PathBuf)> {
+    fs::create_dir_all(p.dir.join(DIR))?;
+    let id = format!("anim_{engine}_{}_{seed}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+    let rel = format!("{DIR}/{id}.mp4");
+    let abs = p.resolve(&rel)?;
+    let raw = p.resolve(&format!("{DIR}/{id}_raw.mp4"))?;
+    Ok((rel, abs, raw))
 }
 
 /// Taille de génération : ~1 mégapixel au format de la sortie, multiples de 16.

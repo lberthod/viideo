@@ -1,0 +1,58 @@
+[
+  {
+    "clip": "kenburns",
+    "frames": 120,
+    "fps": 24.0,
+    "size": "1024x576",
+    "ssim_first_vs_still": 0.969,
+    "ssim_last_vs_still": 0.449,
+    "ssim_mean_vs_still": 0.564,
+    "camera_drift_px_per_frame": 0.247,
+    "camera_drift_total_px": 31.6,
+    "local_motion_p95_px": 0.54,
+    "flicker_luma_std": 0.13,
+    "loop_ssim_last_vs_first": 0.451
+  },
+  {
+    "clip": "sulphur2",
+    "frames": 121,
+    "fps": 24.0,
+    "size": "1024x576",
+    "ssim_first_vs_still": 0.858,
+    "ssim_last_vs_still": 0.511,
+    "ssim_mean_vs_still": 0.604,
+    "camera_drift_px_per_frame": 0.072,
+    "camera_drift_total_px": 10.3,
+    "local_motion_p95_px": 1.19,
+    "flicker_luma_std": 0.125,
+    "loop_ssim_last_vs_first": 0.524
+  },
+  {
+    "clip": "ltx25",
+    "frames": 121,
+    "fps": 24.0,
+    "size": "1024x576",
+    "ssim_first_vs_still": 0.874,
+    "ssim_last_vs_still": 0.379,
+    "ssim_mean_vs_still": 0.428,
+    "camera_drift_px_per_frame": 0.447,
+    "camera_drift_total_px": 51.2,
+    "local_motion_p95_px": 3.89,
+    "flicker_luma_std": 0.191,
+    "loop_ssim_last_vs_first": 0.393
+  },
+  {
+    "clip": "sulphur2_cinemagraph",
+    "frames": 241,
+    "fps": 24.0,
+    "size": "1024x576",
+    "ssim_first_vs_still": 0.976,
+    "ssim_last_vs_still": 0.975,
+    "ssim_mean_vs_still": 0.907,
+    "camera_drift_px_per_frame": 0.0,
+    "camera_drift_total_px": 0.0,
+    "local_motion_p95_px": 0.39,
+    "flicker_luma_std": 0.043,
+    "loop_ssim_last_vs_first": 0.994
+  }
+]

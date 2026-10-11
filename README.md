@@ -5,6 +5,8 @@ sans coût d'API par défaut. Spécification complète : [docs/brief.md](docs/br
 
 ## État
 
+**Étape 5 — moteurs génératifs vidéo : terminée (fonction expérimentale).** Banc Sulphur-2 / LTX-2.5 / Ken Burns sur le décor animé (Wan 2.2 retiré : trop lent sur Mac). Décor animé en **cinémagraphe** : le mouvement généré seulement dans les zones choisies (eau, ciel), le reste du décor fixe — dérive de caméra nulle. Voir [docs/stage5/README.md](docs/stage5/README.md).
+
 **Étape 4 — planification par LLM : terminée.** Onglet Assistant : une demande en français devient un plan d'opérations en liste blanche, validé et chiffré par Rust (temps, mémoire, disque, alternatives rapide/équilibré/qualité), modifiable, puis exécuté étape par étape. LLM local via Ollama (qwen3:30b-a3b). Voir [docs/stage4/README.md](docs/stage4/README.md).
 
 **Étape 3 — création assistée : terminée.** Bibliothèque de décors, génération locale (FLUX.2 klein), adaptateur ComfyUI versionné et sécurisé, préréglages de cadrage et de lumière, flou du décor. Voir [docs/stage3/README.md](docs/stage3/README.md).
