@@ -5,6 +5,8 @@ sans coût d'API par défaut. Spécification complète : [docs/brief.md](docs/br
 
 ## État
 
+**Intégration du sujet (après l'étape 5).** Élément de premier plan généré et détouré automatiquement (cache la coupure et donne un appui), ombre de contact image par image, light wrap. Analyse et comparatif : [docs/stage6/README.md](docs/stage6/README.md).
+
 **Étape 5 — moteurs génératifs vidéo : terminée (fonction expérimentale).** Banc Sulphur-2 / LTX-2.5 / Ken Burns sur le décor animé (Wan 2.2 retiré : trop lent sur Mac). Décor animé en **cinémagraphe** : le mouvement généré seulement dans les zones choisies (eau, ciel), le reste du décor fixe — dérive de caméra nulle. Voir [docs/stage5/README.md](docs/stage5/README.md).
 
 **Étape 4 — planification par LLM : terminée.** Onglet Assistant : une demande en français devient un plan d'opérations en liste blanche, validé et chiffré par Rust (temps, mémoire, disque, alternatives rapide/équilibré/qualité), modifiable, puis exécuté étape par étape. LLM local via Ollama (qwen3:30b-a3b). Voir [docs/stage4/README.md](docs/stage4/README.md).

@@ -33,4 +33,24 @@ check(`coupure gauche invisible (X'(0)=${x0.toFixed(3)})`, x0 <= 0.001);
 // Plan serré : la tête reste dans le cadre
 c = framing("closeup", full, cur); const [, top] = tf(c, 0.65, 0.1);
 check(`plan serré : haut du sujet à 6 % (${top.toFixed(3)})`, Math.abs(top - 0.06) < 0.01);
+
+
+// --- Placement d'un élément de premier plan ---
+const pbody = src.slice(src.indexOf("export function placeElement"), src.indexOf("interface Stats {"))
+  .replace("export function placeElement(b: Bounds, c: Composite, aspect: number, outAspect: number, cover: number)", "function placeElement(b, c, aspect, outAspect, cover)")
+  .replaceAll(": number", "");
+const placeElement = new Function(pbody + "; return placeElement;")();
+const presenter = { x0: 0.35, y0: 0.08, x1: 0.7, y1: 1.0 };
+const comp = { subject_scale: 0.85, subject_x: 0, subject_y: 0.07 };
+for (const [name, aspect] of [["comptoir large", 2.5], ["pupitre carré", 1.0], ["panneau vertical", 0.5]]) {
+  const e = placeElement(presenter, comp, aspect, 16 / 9, 0.36);
+  const h = (e.width * 16 / 9) / aspect;
+  const top = e.y - h;
+  const y0t = 0.5 + (0.08 - 0.5) * 0.85 + 0.07, y1t = 1.0;
+  const want = y1t - 0.36 * (y1t - y0t);
+  const subjW = (0.7 - 0.35) * 0.85;
+  check(`${name} : bord haut sur la ligne (${top.toFixed(3)} ≈ ${want.toFixed(3)})`, Math.abs(top - want) < 0.01);
+  if (aspect >= 1) check(`${name} : au moins aussi large que le sujet`, e.width >= subjW * 1.09);
+  check(`${name} : bas sous le cadre (coupure cachée)`, e.y >= 1.0 || e.y === 1.6);
+}
 process.exit(fails ? 1 : 0);

@@ -152,7 +152,19 @@ pub struct ExportJob {
     pub composite: Composite,
     pub quality: ExportQuality,
     pub videotoolbox: bool,
+    /// Ombres de contact image par image (PNG gris, taille du proxy), si calculées.
+    pub shadows_dir: Option<PathBuf>,
+    /// Image RGBA de l'élément de premier plan (réglages dans `composite.foreground`).
+    pub element: Option<PathBuf>,
     pub dest: PathBuf,
+}
+
+/// Paramètres du light wrap, exprimés pour 720 px de haut (mêmes valeurs dans compositor.ts) :
+/// bande de bord = masque × (1 − flou(masque)), mélange vers le décor flouté.
+pub const WRAP_MASK_BLUR_720: f64 = 10.0;
+pub const WRAP_BG_BLUR_720: f64 = 24.0;
+pub fn wrap_gain(light_wrap: f64) -> f64 {
+    2.0 * light_wrap
 }
 
 /// Encodeur par préréglage. « Rapide » utilise l'encodeur matériel VideoToolbox (3 à 3,5× plus
@@ -211,15 +223,52 @@ pub fn filter_graph(job: &ExportJob) -> String {
     } else {
         String::new()
     };
-    format!(
-        "[0:v]fps={fn_}/{fd},scale={w}:{h}:flags=bicubic,setsar=1,\
+    let fps = format!("{fn_}/{fd}");
+    let shadow = job.shadows_dir.is_some() && c.shadow > 0.01;
+    let wrap = c.light_wrap > 0.01;
+    let element = job.element.is_some() && c.foreground.is_some();
+    let sh_idx = 3;
+    let el_idx = if shadow { 4 } else { 3 };
+    let mut g = format!(
+        "[0:v]fps={fps},scale={w}:{h}:flags=bicubic,setsar=1,\
 eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}[src];\
-[1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}{edge}[m];\
-[src][m]alphamerge,scale={sw}:{sh}:flags=bicubic[fg];\
-[2:v]fps={fn_}/{fd},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1{bgblur},format=rgba[bg];\
-[bg][fg]overlay=x={x}:y={y}:shortest=1:format=auto,format=yuv420p[out]",
+[1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}{edge}{split};\
+[src][m1]alphamerge,scale={sw}:{sh}:flags=bicubic[fg];\
+[2:v]fps={fps},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1{bgblur},format=rgba{bgsplit};",
         b = c.brightness, ct = c.contrast, sa = c.saturation,
-    )
+        split = if wrap { ",split[m1][m2]" } else { "[m1]" },
+        bgsplit = if wrap { ",split[bg][bgw]" } else { "[bg]" },
+    );
+    let mut base = "[bg]".to_string();
+    if shadow {
+        // L'ombre suit exactement la transformation du sujet (échelle, position).
+        g.push_str(&format!(
+            "[{sh_idx}:v]scale={sw}:{sh}:flags=bilinear,format=gray[shm];color=c=black:s={sw}x{sh}:r={fps},format=rgba[blk];\
+[blk][shm]alphamerge,colorchannelmixer=aa={op:.3}[sh];{base}[sh]overlay=x={x}:y={y}:shortest=1:format=auto[bgs];",
+            op = c.shadow));
+        base = "[bgs]".into();
+    }
+    g.push_str(&format!("{base}[fg]overlay=x={x}:y={y}:shortest=1:format=auto[comp];"));
+    let mut cur = "[comp]".to_string();
+    if wrap {
+        let s1 = WRAP_MASK_BLUR_720 * h as f64 / 720.0;
+        let s2 = WRAP_BG_BLUR_720 * h as f64 / 720.0;
+        let k = wrap_gain(c.light_wrap);
+        g.push_str(&format!(
+            "color=c=black:s={w}x{h}:r={fps}[cb];[m2]scale={sw}:{sh}:flags=bilinear[m2s];[cb][m2s]overlay=x={x}:y={y}:shortest=1,format=gray,split[ma][mb];\
+[mb]gblur=sigma={s1:.2},negate[nb];[ma][nb]blend=all_mode=multiply,lut=c0='clip(val*{k:.3}\\,0\\,255)',format=gbrp[band];\
+[bgw]gblur=sigma={s2:.2},format=gbrp[bgb];{cur}format=gbrp[cg];[cg][bgb][band]maskedmerge,format=rgba[wrapped];"));
+        cur = "[wrapped]".into();
+    }
+    if element {
+        let f = c.foreground.as_ref().unwrap();
+        let ew = even(w as f64 * f.width);
+        g.push_str(&format!("[{el_idx}:v]scale={ew}:-2:flags=lanczos,format=rgba[el];{cur}[el]overlay=x={:.4}*W-w/2:y={:.4}*H-h:format=auto[withel];",
+                            f.x, f.y));
+        cur = "[withel]".into();
+    }
+    g.push_str(&format!("{cur}format=yuv420p[out]"));
+    g
 }
 
 /// Lance l'export ; `on_progress` reçoit une fraction 0..1. `slot` permet l'annulation (kill).
@@ -238,6 +287,12 @@ pub fn export(ffmpeg: &Path, job: &ExportJob, slot: Arc<Mutex<Option<Child>>>, m
         Some(bg) => { cmd.args(["-loop", "1", "-framerate", &fps, "-i"]).arg(bg); }
         None => { cmd.args(["-f", "lavfi", "-i", &format!("color=c={}:s={}x{}:r={fps}",
                                                           job.composite.background_color.replace('#', "0x"), job.out_width, job.out_height)]); }
+    }
+    if let Some(dir) = job.shadows_dir.as_ref().filter(|_| job.composite.shadow > 0.01) {
+        cmd.args(["-framerate", &fps, "-start_number", "0", "-i"]).arg(dir.join("%05d.png"));
+    }
+    if let Some(el) = job.element.as_ref().filter(|_| job.composite.foreground.is_some()) {
+        cmd.args(["-loop", "1", "-framerate", &fps, "-i"]).arg(el);
     }
     cmd.args(["-t", &format!("{:.3}", job.duration), "-filter_complex", &filter_graph(job), "-map", "[out]"]);
     if job.has_audio {
@@ -302,7 +357,7 @@ mod tests {
             src: "a.mov".into(), start: 0.0, duration: 2.0, fps: (25, 1), has_audio: false,
             out_width: 1920, out_height: 1080, proxy_height: 720, masks_dir: "m".into(), background: None,
             composite: Composite { subject_scale: 0.5, subject_x: 0.25, edge: 0.25, temperature: -0.1, ..Composite::default() },
-            quality: ExportQuality::Fast, videotoolbox: true, dest: "o.mp4".into(),
+            quality: ExportQuality::Fast, videotoolbox: true, shadows_dir: None, element: None, dest: "o.mp4".into(),
         };
         let g = filter_graph(&job);
         assert!(g.contains("fps=25/1"));
@@ -311,5 +366,20 @@ mod tests {
         assert!(g.contains("x=(W-w)/2+0.2500*W"));
         assert!(g.contains("lut=c0='clip((val-158.00)*2+128"), "{g}");
         assert!(g.contains("lutrgb=r='clip(val+-6.00"), "{g}");
+        assert!(!g.contains("maskedmerge") && !g.contains("[el]"), "options désactivées : graphe minimal");
+        // Ombre + light wrap + élément : indices d'entrée et étapes attendus.
+        let mut job2 = job;
+        job2.composite.shadow = 0.5;
+        job2.composite.light_wrap = 0.5;
+        job2.composite.foreground = Some(crate::project::Foreground { path: "assets/elements/a.png".into(), width: 0.5, x: 0.5, y: 1.0 });
+        job2.shadows_dir = Some("s".into());
+        job2.element = Some("e.png".into());
+        let g = filter_graph(&job2);
+        assert!(g.contains("[3:v]scale=960:540:flags=bilinear,format=gray[shm]"), "{g}");
+        assert!(g.contains("colorchannelmixer=aa=0.500"));
+        assert!(g.contains("[cg][bgb][band]maskedmerge"));
+        assert!(g.contains("[4:v]scale=960:-2:flags=lanczos,format=rgba[el]"), "{g}");
+        assert!(g.contains("overlay=x=0.5000*W-w/2:y=1.0000*H-h"));
+        assert!(g.ends_with("[withel]format=yuv420p[out]"));
     }
 }

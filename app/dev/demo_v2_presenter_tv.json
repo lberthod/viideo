@@ -1,0 +1,41 @@
+{
+  "background": "",
+  "start": 0,
+  "duration": 5,
+  "box": [
+    440,
+    60,
+    910,
+    719
+  ],
+  "points": [
+    [
+      700,
+      180
+    ],
+    [
+      700,
+      340
+    ]
+  ],
+  "negative": [
+    [
+      680,
+      640
+    ],
+    [
+      600,
+      600
+    ]
+  ],
+  "generate_prompt": "studio de télévision moderne aux tons bleus, écrans lumineux en arrière-plan, sol brillant. Photographie réaliste, plan large à hauteur d'yeux, scène vide sans personne, sol visible au premier plan, faible profondeur de champ.",
+  "framing": "center",
+  "element": {
+    "prompt": "long comptoir bas de plateau de journal télévisé, nettement plus large que haut, façade pleine en verre dépoli bleu lumineux et métal brossé, fermé jusqu'au sol, vue de face",
+    "cover": 0.36,
+    "seed": 21
+  },
+  "light_wrap": 0.5,
+  "harmonize": true,
+  "export_quality": "balanced"
+}

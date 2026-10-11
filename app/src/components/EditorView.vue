@@ -4,12 +4,13 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api, errorText, fileUrl, formatBytes, formatTime, frameName, onExportProgress, onMaskProgress,
-  type Composite, type DiskUsage, type ExportQuality, type ExportRecord, type MaskQuality, type Plan, type PlanStep, type Prompt, type ProjectView,
+  type Composite, type DiskUsage, type ElementItem, type Foreground, type ExportQuality, type ExportRecord, type MaskQuality, type Plan, type PlanStep, type Prompt, type ProjectView,
   PLATE_SUFFIX, isVideoPath,
 } from "../api";
 import AssistantPanel, { type StepState } from "./AssistantPanel.vue";
-import { framing, harmonize, LIGHTING, loadImage, preload, subjectBounds, videoFrameAt, type FramingPreset } from "../compositor";
+import { framing, harmonize, LIGHTING, loadImage, placeElement, preload, subjectBounds, videoFrameAt, type FramingPreset } from "../compositor";
 import BackgroundLibrary from "./BackgroundLibrary.vue";
+import ElementLibrary from "./ElementLibrary.vue";
 import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
 
 const props = defineProps<{ initial: ProjectView }>();
@@ -51,6 +52,10 @@ const maskUrl = computed(() => {
   return p ? fileUrl(p) : null;
 });
 const backgroundUrl = computed(() => (pv.value.background_path ? fileUrl(pv.value.background_path) : null));
+const shadowUrl = computed(() => (pv.value.shadow_dir && composite.value.shadow > 0.01 ? fileUrl(`${pv.value.shadow_dir}/${frameName(frame.value)}.png`) : null));
+// L'image de l'élément vient de la bibliothèque (choix local immédiat), sinon du projet.
+const elementAbs = ref<string | null>(props.initial.element_path);
+const elementUrl = computed(() => (composite.value.foreground && elementAbs.value ? fileUrl(elementAbs.value) : null));
 
 function apply(v: ProjectView) {
   const maskChanged = v.mask_dir !== pv.value.mask_dir;
@@ -181,6 +186,48 @@ function applyLighting(key: string) {
   mode.value = "composite";
 }
 
+// --- Intégration : ombre, light wrap, élément de premier plan --------------------------------
+async function setShadow(v: number) {
+  composite.value = { ...composite.value, shadow: v };
+  if (v > 0.01 && !pv.value.shadow_dir) {
+    const r = await run(() => api.computeShadows());
+    if (r) pv.value = { ...pv.value, shadow_dir: r.shadow_dir };
+  }
+  mode.value = "composite";
+}
+
+async function subjectBox() {
+  const idx = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * (frames.value - 1)));
+  const masks = await Promise.all(idx.map((i) => loadImage(fileUrl(`${pv.value.mask_dir}/${frameName(i)}.png`))));
+  return subjectBounds(masks);
+}
+
+let elementAspect = 1;
+function chooseElement(item: ElementItem) {
+  elementAbs.value = item.abs_path;
+  elementAspect = item.width / Math.max(item.height, 1);
+  const f: Foreground = composite.value.foreground?.path === item.path
+    ? composite.value.foreground : { path: item.path, width: 0.4, x: 0.5, y: 1.0 };
+  composite.value = { ...composite.value, foreground: f };
+  autoPlace(0.3);
+}
+
+async function autoPlace(cover: number) {
+  if (!composite.value.foreground || !pv.value.mask_dir) return;
+  await run(async () => {
+    if (elementAbs.value) {
+      const img = await loadImage(fileUrl(elementAbs.value));
+      elementAspect = img.naturalWidth / Math.max(img.naturalHeight, 1);
+    }
+    const b = await subjectBox();
+    if (!b) throw new Error("Masque vide : impossible de placer l'élément.");
+    const outAspect = (proxy.value?.width ?? 16) / (proxy.value?.height ?? 9);
+    const pos = placeElement(b, composite.value, elementAspect, outAspect, cover);
+    composite.value = { ...composite.value, foreground: { ...composite.value.foreground!, ...pos } };
+  });
+  mode.value = "composite";
+}
+
 const FRAMINGS: { id: FramingPreset; label: string }[] = [
   { id: "center", label: "Centré" }, { id: "ground", label: "En pied, au sol" },
   { id: "third-left", label: "Tiers gauche" }, { id: "third-right", label: "Tiers droit" }, { id: "closeup", label: "Plan serré" },
@@ -196,7 +243,7 @@ watch(composite, (c) => {
 }, { deep: true });
 
 function resetLook() {
-  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0 };
+  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0, shadow: 0, light_wrap: 0 };
 }
 
 async function toggleCleanup(ev: Event) {
@@ -391,12 +438,17 @@ interface DemoSpec {
   assistant?: { instruction: string; mode: "fast" | "balanced" | "quality" };
   /** Étape 5 : anime le décor choisi (moteur du registre workflows/video/engines.json). */
   animate?: { engine: string; seconds: number; prompt?: string; zones?: [number, number][] };
+  /** Intégration : points d'exclusion, élément de premier plan, ombre, light wrap. */
+  negative?: [number, number][];
+  element?: { prompt: string; cover: number; seed?: number };
+  shadow?: number; light_wrap?: number; harmonize?: boolean;
 }
 async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
   step.value = "clip"; clipStart.value = spec.start; clipDuration.value = spec.duration; await prepareClip(); await mark("1-proxy");
   tool.value = "box"; await onBox(spec.box);
   for (const [x, y] of spec.points) await onPoint(x, y, true);
+  for (const [x, y] of spec.negative ?? []) await onPoint(x, y, false);
   await mark("2-preview");
   if (spec.assistant) {
     step.value = "assistant";
@@ -432,7 +484,15 @@ async function runDemo(spec: DemoSpec) {
   composite.value = { ...composite.value, edge: 0.1 };
   mode.value = "composite"; await pause(500);
   if (spec.framing) await applyFraming(spec.framing);
-  if (spec.lighting) applyLighting(spec.lighting); else await autoHarmonize();
+  if (spec.element) {
+    const els = await api.createElement(spec.element.prompt, spec.element.seed ?? 7);
+    chooseElement(els[0]);
+    await autoPlace(spec.element.cover);
+  }
+  if (spec.shadow) await setShadow(spec.shadow);
+  if (spec.light_wrap) composite.value = { ...composite.value, light_wrap: spec.light_wrap };
+  if (spec.lighting) applyLighting(spec.lighting);
+  if (spec.harmonize || !spec.lighting) await autoHarmonize();
   mode.value = "composite"; await mark("4-decor");
   step.value = "export"; if (spec.export_quality) await setQuality(spec.export_quality);
   await refreshDisk(); await exportVideo(); await refreshDisk(); await mark("5-exported");
@@ -506,6 +566,7 @@ function stepState(id: Step) {
           :frame-url="frameUrl" :mask-url="maskUrl" :background-url="backgroundUrl" :mode="mode"
           :composite="composite" :prompt="currentPrompt" :tool="step === 'subject' ? tool : null"
           :width="proxy?.width ?? 1280" :height="proxy?.height ?? 720" :time="frame / fps"
+          :shadow-url="shadowUrl" :element-url="elementUrl"
           @point="onPoint" @box="onBox"
         />
         <div v-if="frames" class="timeline">
@@ -608,6 +669,19 @@ function stepState(id: Step) {
             <label>Adoucissement du bord <span class="mono">{{ composite.feather.toFixed(1) }} px</span><input id="feather" type="range" min="0" max="8" step="0.5" v-model.number="composite.feather" /></label>
             <label>Bord : étendre ↔ rétrécir <span class="mono">{{ composite.edge.toFixed(2) }}</span><input id="edge" type="range" min="-0.5" max="0.5" step="0.01" v-model.number="composite.edge" /></label>
           </fieldset>
+          <fieldset>
+            <legend>Intégration</legend>
+            <label>Ombre de contact <span class="mono">{{ composite.shadow.toFixed(2) }}</span>
+              <input id="shadow" type="range" min="0" max="1" step="0.05" :value="composite.shadow" :disabled="!pv.mask_dir"
+                @change="setShadow(Number(($event.target as HTMLInputElement).value))" />
+            </label>
+            <p class="muted small">Calculée image par image sous les pieds, seulement quand ils sont visibles (pas de sol déterminable si le sujet est coupé en bas).</p>
+            <label>Light wrap (lumière du décor sur les bords) <span class="mono">{{ composite.light_wrap.toFixed(2) }}</span>
+              <input id="light-wrap" type="range" min="0" max="1" step="0.05" v-model.number="composite.light_wrap" />
+            </label>
+          </fieldset>
+          <ElementLibrary :current="composite.foreground" :busy="!!job" @choose="chooseElement"
+            @update="composite = { ...composite, foreground: $event }" @autoplace="autoPlace" @error="error = $event" />
           <fieldset>
             <legend>Lumière et couleur du sujet</legend>
             <div class="presets">

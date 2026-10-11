@@ -17,7 +17,12 @@ export interface Composite {
   subject_scale: number; subject_x: number; subject_y: number;
   feather: number; brightness: number; contrast: number; saturation: number;
   edge: number; temperature: number; bg_blur: number;
+  shadow: number; light_wrap: number; foreground: Foreground | null;
 }
+
+/** Élément de premier plan : largeur et centre X en fraction de la largeur, bas en fraction de la hauteur. */
+export interface Foreground { path: string; width: number; x: number; y: number }
+export interface ElementItem { path: string; abs_path: string; width: number; height: number; meta: { prompt?: string; source?: string; seconds?: number; seed?: number } }
 
 export interface GenerationSettings { backend: string; comfy_url: string }
 
@@ -98,6 +103,7 @@ export interface Manifest {
 export interface ProjectView {
   dir: string; manifest: Manifest; source_missing: boolean;
   proxy_dir: string | null; mask_dir: string | null; background_path: string | null;
+  shadow_dir: string | null; element_path: string | null;
 }
 
 export interface PreviewResult { frame: number; png: string; area_pct: number }
@@ -132,6 +138,10 @@ export const api = {
   deleteBackground: (rel: string) => invoke<BackgroundItem[]>("delete_background", { rel }),
   imageBackends: () => invoke<ImageBackends>("image_backends"),
   setGeneration: (settings: GenerationSettings) => invoke<ProjectView>("set_generation", { settings }),
+  computeShadows: () => invoke<ProjectView>("compute_shadows"),
+  listElements: () => invoke<ElementItem[]>("list_elements"),
+  createElement: (prompt: string, seed: number | null) => invoke<ElementItem[]>("create_element", { prompt, seed }),
+  importElement: (path: string) => invoke<ElementItem[]>("import_element", { path }),
   videoEngines: () => invoke<VideoEngines>("video_engines"),
   animateBackground: (engine: string, prompt: string, seconds: number, seed: number | null, zones: [number, number][] | null) =>
     invoke<BackgroundItem>("animate_background", { engine, prompt, seconds, seed, zones }),

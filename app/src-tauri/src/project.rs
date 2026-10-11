@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{err, Result};
 use crate::media::Probe;
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 pub const MANIFEST: &str = "project.json";
 const SUBDIRS: [&str; 5] = ["media", "assets", "cache", "exports", "logs"];
 
@@ -182,6 +182,27 @@ pub struct Composite {
     /// Flou du décor (profondeur de champ simulée), en pixels de la sortie 720p.
     #[serde(default)]
     pub bg_blur: f64,
+    /// Ombre de contact sous les pieds (0 = aucune, 1 = pleine), calculée image par image.
+    #[serde(default)]
+    pub shadow: f64,
+    /// « Light wrap » : la lumière floutée du décor déborde sur les bords du sujet (0 à 1).
+    #[serde(default)]
+    pub light_wrap: f64,
+    /// Élément de premier plan, devant le sujet (bureau, rambarde, végétation…).
+    #[serde(default)]
+    pub foreground: Option<Foreground>,
+}
+
+/// Élément de premier plan : image RGBA de la bibliothèque `assets/elements/`, placée devant le sujet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Foreground {
+    pub path: String,
+    /// Largeur en fraction de la largeur de sortie.
+    pub width: f64,
+    /// Centre horizontal, en fraction de la largeur.
+    pub x: f64,
+    /// Bord inférieur, en fraction de la hauteur.
+    pub y: f64,
 }
 
 impl Default for Composite {
@@ -199,6 +220,9 @@ impl Default for Composite {
             edge: 0.0,
             temperature: 0.0,
             bg_blur: 0.0,
+            shadow: 0.0,
+            light_wrap: 0.0,
+            foreground: None,
         }
     }
 }
@@ -216,6 +240,8 @@ impl Composite {
             ("bord", self.edge, -0.5, 0.5),
             ("température", self.temperature, -0.5, 0.5),
             ("flou du décor", self.bg_blur, 0.0, 30.0),
+            ("ombre", self.shadow, 0.0, 1.0),
+            ("light wrap", self.light_wrap, 0.0, 1.0),
         ];
         for (name, v, lo, hi) in checks {
             if !v.is_finite() || v < lo || v > hi {
@@ -229,6 +255,17 @@ impl Composite {
         if let Some(bg) = &self.background {
             if !is_safe_relative(bg) {
                 return err("Chemin de décor invalide.");
+            }
+        }
+        if let Some(f) = &self.foreground {
+            if !is_safe_relative(&f.path) || !f.path.starts_with("assets/elements/") {
+                return err("Élément de premier plan invalide.");
+            }
+            for (name, v, lo, hi) in [("largeur de l'élément", f.width, 0.03, 3.0), ("position X de l'élément", f.x, -0.5, 1.5),
+                                      ("bas de l'élément", f.y, 0.0, 1.6)] {
+                if !v.is_finite() || v < lo || v > hi {
+                    return err(format!("Réglage « {name} » hors limites ({v})."));
+                }
             }
         }
         Ok(())
@@ -431,6 +468,12 @@ fn migrate(mut value: serde_json::Value, from: u32) -> Result<serde_json::Value>
                 value["composite"]["bg_blur"] = 0.0.into();
                 value["generation"] = serde_json::to_value(GenerationSettings::default())?;
             }
+            // 3 -> 4 : ombre de contact, light wrap, élément de premier plan.
+            3 => {
+                value["composite"]["shadow"] = 0.0.into();
+                value["composite"]["light_wrap"] = 0.0.into();
+                value["composite"]["foreground"] = serde_json::Value::Null;
+            }
             _ => return err(format!("Aucune migration connue depuis le schéma {v}.")),
         }
         v += 1;
@@ -491,6 +534,9 @@ mod tests {
         v.as_object_mut().unwrap().remove("export_settings");
         v.as_object_mut().unwrap().remove("generation");
         v["composite"].as_object_mut().unwrap().remove("bg_blur");
+        v["composite"].as_object_mut().unwrap().remove("shadow");
+        v["composite"].as_object_mut().unwrap().remove("light_wrap");
+        v["composite"].as_object_mut().unwrap().remove("foreground");
         fs::write(dir.join(MANIFEST), serde_json::to_vec(&v).unwrap()).unwrap();
         let q = Project::open(&dir).unwrap();
         assert_eq!(q.manifest.schema_version, SCHEMA_VERSION);
@@ -499,6 +545,8 @@ mod tests {
         assert_eq!(q.manifest.export_settings.quality, ExportQuality::Balanced);
         assert_eq!(q.manifest.composite.bg_blur, 0.0);
         assert_eq!(q.manifest.generation.backend, "builtin");
+        assert_eq!(q.manifest.composite.shadow, 0.0);
+        assert!(q.manifest.composite.foreground.is_none());
     }
 
     #[test]

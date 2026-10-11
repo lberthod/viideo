@@ -20,6 +20,8 @@ const props = defineProps<{
   height: number;
   /** Temps de l'image courante dans l'extrait (s), pour un décor animé. */
   time?: number;
+  shadowUrl?: string | null;
+  elementUrl?: string | null;
 }>();
 const emit = defineEmits<{
   (e: "point", x: number, y: number, positive: boolean): void;
@@ -53,7 +55,14 @@ async function render() {
     missing.value = null;
     if (isComposite()) {
       if (!mask) { missing.value = "Pas de masque pour cette image : propagez le masque."; ctx.drawImage(frame, 0, 0, w, h); }
-      else drawComposite(ctx, w, h, frame, mask, bg, props.composite);
+      else {
+        const [shadow, element] = await Promise.all([
+          props.shadowUrl ? loadImage(props.shadowUrl).catch(() => null) : null,
+          props.elementUrl ? loadImage(props.elementUrl).catch(() => null) : null,
+        ]);
+        if (my !== token) return;
+        drawComposite(ctx, w, h, frame, mask, bg, props.composite, { shadow, element });
+      }
       if (props.mode === "split") {
         // À gauche du séparateur : la source d'origine.
         const x = Math.round(split.value * w);
@@ -170,7 +179,7 @@ function onUp() {
   else render();
 }
 
-watch(() => [props.frameUrl, props.maskUrl, props.backgroundUrl, props.mode, props.prompt, props.composite, props.width, props.height, props.time], render, { deep: true });
+watch(() => [props.frameUrl, props.maskUrl, props.backgroundUrl, props.mode, props.prompt, props.composite, props.width, props.height, props.time, props.shadowUrl, props.elementUrl], render, { deep: true });
 onMounted(render);
 </script>
 

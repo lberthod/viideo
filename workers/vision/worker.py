@@ -203,7 +203,56 @@ class VisionWorker:
         _, (_, _, logits) = last
         mask = (logits[0, 0] > 0).float().cpu().numpy() > 0
         self._write_mask(out, mask)
-        return {"frame": frame, "out_png": str(out), "area_pct": round(float(mask.mean() * 100), 2)}
+        ys, xs = mask.nonzero()
+        bbox = [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1] if len(xs) else None
+        return {"frame": frame, "out_png": str(out), "area_pct": round(float(mask.mean() * 100), 2), "bbox": bbox,
+                "width": int(mask.shape[1]), "height": int(mask.shape[0])}
+
+    def op_contact_shadows(self, p):
+        """Ombre de contact image par image (PNG en niveaux de gris, blanc = ombre pleine).
+
+        Seulement si les pieds sont visibles : le bas du masque ne touche pas le bord de l'image
+        (sinon le sol n'est pas déterminable et l'image d'ombre reste vide). Ellipse centrée sous la
+        base du sujet, largeur selon l'empreinte des pieds, fortement adoucie.
+        """
+        import cv2
+        import numpy as np
+        masks_dir = self._path(p["masks_dir"], must_exist=True)
+        out_dir = self._path(p["out_dir"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted(masks_dir.glob("*.png"), key=lambda f: int(f.stem))
+        with_shadow = 0
+        for f in files:
+            m = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE) > 127
+            h, w = m.shape
+            shadow = np.zeros((h, w), np.float32)
+            ys, xs = m.nonzero()
+            if len(ys) and ys.max() < h * 0.985:
+                y1 = int(ys.max())
+                band = m[max(0, y1 - int(0.04 * h)):y1 + 1]
+                bx = band.nonzero()[1]
+                if len(bx):
+                    cx = float(bx.mean())
+                    foot_w = float(bx.max() - bx.min() + 1)
+                    body_w = float(xs.max() - xs.min() + 1)
+                    rx = max(0.6 * foot_w + 0.08 * body_w, 0.02 * w)
+                    ry = max(0.18 * rx, 0.006 * h)
+                    cv2.ellipse(shadow, (int(cx), int(y1 - 0.25 * ry)), (int(rx), int(ry)), 0, 0, 360, 1.0, -1)
+                    shadow = cv2.GaussianBlur(shadow, (0, 0), sigmaX=max(rx * 0.25, 2), sigmaY=max(ry * 0.8, 2))
+                    shadow = shadow / max(float(shadow.max()), 1e-6)
+                    # Le sujet lui-même n'est pas assombri (l'ombre passe dessous).
+                    shadow[m] = 0
+                    with_shadow += 1
+            self._write_gray(out_dir / f.name, shadow)
+        return {"frames": len(files), "with_shadow": with_shadow, "out_dir": str(out_dir)}
+
+    @staticmethod
+    def _write_gray(path, values):
+        import cv2
+        import numpy as np
+        tmp = path.with_suffix(".tmp.png")
+        cv2.imwrite(str(tmp), (np.clip(values, 0, 1) * 255).astype(np.uint8))
+        tmp.replace(path)
 
     def op_propagate(self, p, req_id):
         """Propage le masque sur toute la vidéo, par blocs, et écrit un PNG par image + quality.json.
@@ -412,6 +461,7 @@ def main():
     send({"id": None, "event": "ready", "schema_version": SCHEMA_VERSION})
 
     ops = {"ping": worker.op_ping, "load_model": worker.op_load_model, "init_video": worker.op_init_video,
+           "contact_shadows": worker.op_contact_shadows,
            "preview": worker.op_preview, "reset": worker.op_reset, "unload": worker.op_unload}
     while True:
         msg = inbox.get()

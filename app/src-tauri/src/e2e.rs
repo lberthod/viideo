@@ -68,7 +68,7 @@ fn full_pipeline() {
         src: clip.clone(), start: 0.0, duration: 3.0, fps, has_audio: probe.has_audio, out_width: ow, out_height: oh,
         proxy_height: r.height, masks_dir: p.resolve(&mask_rel).unwrap(), background: None,
         composite: Composite { subject_scale: 0.8, subject_x: 0.1, edge: 0.15, temperature: 0.1, ..Composite::default() },
-        quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox, dest: dest.clone(),
+        quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox, shadows_dir: None, element: None, dest: dest.clone(),
     };
     let mut last = 0.0;
     media::export(&tools.ffmpeg, &job, Arc::new(Mutex::new(None)), |f| last = f).unwrap();
@@ -243,4 +243,37 @@ fn e2e_cinemagraph() {
     let p = crate::media::probe(&tools.ffprobe, &out).unwrap();
     println!("cinémagraphe {}x{} {:.2} s", p.width, p.height, p.duration);
     assert!((p.duration - 241.0 / 24.0).abs() < 0.1, "2N−1 images en aller-retour");
+}
+
+/// Export avec ombre de contact, light wrap et élément de premier plan sur un projet existant :
+///   VIDEEO_E2E_PROJECT=../../cache/dev_anim VIDEEO_E2E_SHADOWS=... VIDEEO_E2E_ELEMENT=x.png VIDEEO_E2E_OUT=o.mp4 \
+///   cargo test e2e_integration_export -- --ignored --nocapture
+#[test]
+#[ignore]
+fn e2e_integration_export() {
+    use crate::project::Foreground;
+    let p = Project::open(std::path::Path::new(&std::env::var("VIDEEO_E2E_PROJECT").unwrap())).unwrap();
+    let tools = Tools::detect();
+    let m = &p.manifest;
+    let proxy = m.proxy.as_ref().unwrap();
+    let (w, h) = media::output_size(m.source.probe.display_width, m.source.probe.display_height);
+    let mut c = m.composite.clone();
+    c.shadow = 0.6;
+    c.light_wrap = 0.6;
+    c.foreground = Some(Foreground { path: "assets/elements/x.png".into(), width: 0.35, x: 0.3, y: 1.02 });
+    let job = ExportJob {
+        src: p.source_path(), start: m.clip.start, duration: m.clip.duration, fps: (proxy.fps_num, proxy.fps_den),
+        has_audio: false, out_width: w, out_height: h, proxy_height: proxy.height,
+        masks_dir: p.resolve(&m.segmentation.mask.as_ref().unwrap().dir).unwrap(),
+        background: m.composite.background.as_deref().map(|b| p.resolve(b).unwrap()),
+        composite: c, quality: crate::project::ExportQuality::Fast, videotoolbox: tools.videotoolbox,
+        shadows_dir: Some(PathBuf::from(std::env::var("VIDEEO_E2E_SHADOWS").unwrap())),
+        element: Some(PathBuf::from(std::env::var("VIDEEO_E2E_ELEMENT").unwrap())),
+        dest: PathBuf::from(std::env::var("VIDEEO_E2E_OUT").unwrap()),
+    };
+    let t0 = std::time::Instant::now();
+    media::export(&tools.ffmpeg, &job, Arc::new(Mutex::new(None)), |_| {}).unwrap();
+    let out = media::probe(&tools.ffprobe, &job.dest).unwrap();
+    println!("export intégration {}x{} {:.2} s en {:.1} s", out.width, out.height, out.duration, t0.elapsed().as_secs_f64());
+    assert!((out.duration - m.clip.duration).abs() < 0.2);
 }

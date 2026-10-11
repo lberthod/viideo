@@ -110,19 +110,112 @@ export function drawCover(ctx: CanvasRenderingContext2D, img: Drawable, w: numbe
   ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
 }
 
+const layer = document.createElement("canvas");
+const layer2 = document.createElement("canvas");
+// media.rs : WRAP_MASK_BLUR_720, WRAP_BG_BLUR_720, wrap_gain
+const WRAP_MASK_BLUR_720 = 10, WRAP_BG_BLUR_720 = 24;
+
+export interface Extras { shadow?: HTMLImageElement | null; element?: HTMLImageElement | null }
+
+/** Ordre (identique à l'export) : décor, ombre, sujet, light wrap, élément de premier plan. */
 export function drawComposite(
   ctx: CanvasRenderingContext2D, w: number, h: number,
-  frame: HTMLImageElement, mask: HTMLImageElement, bg: Drawable | null, c: Composite,
+  frame: HTMLImageElement, mask: HTMLImageElement, bg: Drawable | null, c: Composite, extras: Extras = {},
 ) {
-  if (bg) {
-    // Flou du décor exprimé pour 720 px de haut (media.rs : gblur mis à l'échelle de la sortie).
-    ctx.filter = c.bg_blur >= 0.5 ? `blur(${(c.bg_blur * h) / 720}px)` : "none";
-    drawCover(ctx, bg, w, h);
-    ctx.filter = "none";
-  } else { ctx.fillStyle = c.background_color; ctx.fillRect(0, 0, w, h); }
-  const fg = cutout(frame, mask, c);
+  const drawBg = (target: CanvasRenderingContext2D, extraBlur = 0) => {
+    const b = (c.bg_blur >= 0.5 ? (c.bg_blur * h) / 720 : 0) + extraBlur;
+    if (bg) {
+      // Flou du décor exprimé pour 720 px de haut (media.rs : gblur mis à l'échelle de la sortie).
+      target.filter = b > 0 ? `blur(${b}px)` : "none";
+      drawCover(target, bg, w, h);
+      target.filter = "none";
+    } else { target.fillStyle = c.background_color; target.fillRect(0, 0, w, h); }
+  };
+  drawBg(ctx);
   const sw = w * c.subject_scale, sh = h * c.subject_scale;
-  ctx.drawImage(fg, (w - sw) / 2 + c.subject_x * w, (h - sh) / 2 + c.subject_y * h, sw, sh);
+  const sx = (w - sw) / 2 + c.subject_x * w, sy = (h - sh) / 2 + c.subject_y * h;
+
+  if (extras.shadow && c.shadow > 0.01) {
+    const sc = layer;
+    sc.width = extras.shadow.naturalWidth; sc.height = extras.shadow.naturalHeight;
+    const s = sc.getContext("2d", { willReadFrequently: true })!;
+    s.drawImage(extras.shadow, 0, 0);
+    const d = s.getImageData(0, 0, sc.width, sc.height);
+    for (let i = 0; i < d.data.length; i += 4) { d.data[i + 3] = d.data[i] * c.shadow; d.data[i] = d.data[i + 1] = d.data[i + 2] = 0; }
+    s.putImageData(d, 0, 0);
+    ctx.drawImage(sc, sx, sy, sw, sh);
+  }
+
+  const fg = cutout(frame, mask, c);
+  ctx.drawImage(fg, sx, sy, sw, sh);
+
+  if (c.light_wrap > 0.01) {
+    // Bande de bord = masque × (1 − flou(masque)), dans l'espace de sortie ; mélange vers le décor flouté.
+    const mc = layer2;
+    mc.width = w; mc.height = h;
+    const m = mc.getContext("2d", { willReadFrequently: true })!;
+    m.fillStyle = "#000"; m.fillRect(0, 0, w, h);
+    const alpha = maskAlpha(mask, frame.naturalWidth, frame.naturalHeight, c);
+    const mcv = document.createElement("canvas");
+    mcv.width = frame.naturalWidth; mcv.height = frame.naturalHeight;
+    const mctx = mcv.getContext("2d")!;
+    const md = mctx.createImageData(mcv.width, mcv.height);
+    for (let i = 0; i < alpha.length; i += 4) { md.data[i] = md.data[i + 1] = md.data[i + 2] = alpha[i]; md.data[i + 3] = 255; }
+    mctx.putImageData(md, 0, 0);
+    m.drawImage(mcv, sx, sy, sw, sh);
+    const sharp = m.getImageData(0, 0, w, h).data;
+    m.filter = `blur(${(WRAP_MASK_BLUR_720 * h) / 720}px)`;
+    m.drawImage(mc, 0, 0);
+    m.filter = "none";
+    const soft = m.getImageData(0, 0, w, h).data;
+    const bc = layer;
+    bc.width = w; bc.height = h;
+    const bctx = bc.getContext("2d", { willReadFrequently: true })!;
+    drawBg(bctx, (WRAP_BG_BLUR_720 * h) / 720);
+    const bgb = bctx.getImageData(0, 0, w, h).data;
+    const out = ctx.getImageData(0, 0, w, h);
+    const k = 2 * c.light_wrap;
+    for (let i = 0; i < out.data.length; i += 4) {
+      const a = Math.min(1, (sharp[i] / 255) * (1 - soft[i] / 255) * k);
+      if (a <= 0) continue;
+      out.data[i] = out.data[i] * (1 - a) + bgb[i] * a;
+      out.data[i + 1] = out.data[i + 1] * (1 - a) + bgb[i + 1] * a;
+      out.data[i + 2] = out.data[i + 2] * (1 - a) + bgb[i + 2] * a;
+    }
+    ctx.putImageData(out, 0, 0);
+  }
+
+  const f = c.foreground;
+  if (f && extras.element) {
+    const ew = f.width * w, eh = (ew * extras.element.naturalHeight) / extras.element.naturalWidth;
+    ctx.drawImage(extras.element, f.x * w - ew / 2, f.y * h - eh, ew, eh);
+  }
+}
+
+/**
+ * Place un élément de premier plan pour masquer le bas du sujet.
+ * - Son bord haut est à la hauteur `cover` (fraction de la hauteur du sujet, depuis le bas).
+ * - Il est au moins 10 % plus large que le sujet (sinon ses côtés laisseraient voir la coupure).
+ * - Sa hauteur suit son rapport d'aspect : il peut déborder sous le bord de l'image, ce qui est
+ *   naturel pour un objet au premier plan (il ne remonte jamais au-dessus de la ligne demandée).
+ * - Si le sujet n'est pas coupé et que l'élément est plus court, il est posé au niveau des pieds.
+ */
+export function placeElement(b: Bounds, c: Composite, aspect: number, outAspect: number, cover: number) {
+  const s = c.subject_scale;
+  const tx = (X: number) => 0.5 + (X - 0.5) * s + c.subject_x;
+  const ty = (Y: number) => 0.5 + (Y - 0.5) * s + c.subject_y;
+  const x0 = tx(b.x0), x1 = tx(b.x1), y0 = ty(b.y0), y1 = Math.min(ty(b.y1), 1.0);
+  const cut = b.y1 > 0.985 || ty(b.y1) >= 0.999;
+  const top = y1 - cover * (y1 - y0);
+  const minBottom = cut ? 1.03 : y1 + 0.03;
+  // Largeur : celle qui couvre de `top` à `minBottom`, mais au moins 1,1 × la largeur du sujet.
+  let width = Math.max((minBottom - top) * aspect / outAspect, (x1 - x0) * 1.1);
+  // Priorité à la ligne de couverture : le bas ne peut pas dépasser 1,6 (limite validée par Rust) ;
+  // un élément très haut (panneau) devient alors plus étroit que le sujet.
+  width = Math.min(width, (1.6 - top) * aspect / outAspect);
+  const bottom = top + (width * outAspect) / aspect;
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  return { width: r(Math.min(3, Math.max(0.03, width))), x: r((x0 + x1) / 2), y: r(Math.min(1.6, bottom)) };
 }
 
 interface Stats { luma: number; lumaStd: number; warmth: number; chroma: number; n: number }

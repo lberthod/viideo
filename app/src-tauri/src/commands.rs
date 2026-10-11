@@ -82,6 +82,15 @@ pub struct ProjectView {
     pub proxy_dir: Option<String>,
     pub mask_dir: Option<String>,
     pub background_path: Option<String>,
+    /// Ombres de contact calculées pour le masque courant.
+    pub shadow_dir: Option<String>,
+    pub element_path: Option<String>,
+}
+
+/// Dossier des ombres de contact : dérivé de la clé du masque (régénérable, invalidé avec lui).
+fn shadow_rel(p: &Project) -> Option<String> {
+    let seg = &p.manifest.segmentation;
+    seg.mask.as_ref().filter(|_| seg.status == MaskStatus::Ready).map(|m| format!("cache/shadows/{}", &m.key[..16]))
 }
 
 fn view(p: &Project) -> ProjectView {
@@ -94,6 +103,8 @@ fn view(p: &Project) -> ProjectView {
         proxy_dir: m.proxy.as_ref().and_then(|x| abs(&x.dir)),
         mask_dir: m.segmentation.mask.as_ref().filter(|_| m.segmentation.status == MaskStatus::Ready).and_then(|x| abs(&x.dir)),
         background_path: m.composite.background.as_deref().and_then(abs),
+        shadow_dir: shadow_rel(p).and_then(|r| abs(&r)),
+        element_path: m.composite.foreground.as_ref().and_then(|f| abs(&f.path)),
     }
 }
 
@@ -587,6 +598,11 @@ pub fn set_composite(state: State<'_, AppState>, composite: Composite) -> Result
                 return err("Le décor doit être importé dans le projet.");
             }
         }
+        if let Some(f) = &composite.foreground {
+            if !p.resolve(&f.path)?.exists() {
+                return err("Élément de premier plan introuvable dans le projet.");
+            }
+        }
         p.manifest.composite = composite;
         p.touch_and_save()?;
         Ok(view(p))
@@ -623,6 +639,8 @@ pub async fn export_video(app: AppHandle, state: State<'_, AppState>) -> Result<
             composite: m.composite.clone(),
             quality: m.export_settings.quality.clone(),
             videotoolbox: state.tools.videotoolbox,
+            shadows_dir: shadow_rel(p).map(|r| p.resolve(&r)).transpose()?.filter(|d| d.exists()),
+            element: m.composite.foreground.as_ref().map(|f| p.resolve(&f.path)).transpose()?.filter(|e| e.exists()),
             dest: p.resolve(&rel)?,
         }, rel))
     })?;
@@ -835,6 +853,164 @@ pub fn revalidate_plan(state: State<'_, AppState>, mut plan: Plan, mode_changed:
         let (_, ctx) = planner_context(p);
         Ok(plan::revalidate(plan, &ctx))
     })
+}
+
+// --- Intégration : ombre de contact et éléments de premier plan --------------------------------
+
+/// Calcule les ombres de contact du masque courant (une image par image ; vide si les pieds ne
+/// sont pas visibles). Résultat mis en cache avec la clé du masque.
+#[tauri::command]
+pub async fn compute_shadows(app: AppHandle, state: State<'_, AppState>) -> Result<ProjectView> {
+    let _busy = BusyGuard::acquire(&state.busy, "ombre de contact")?;
+    let (masks, out) = with_project(&state, |p| {
+        let seg = &p.manifest.segmentation;
+        let mask = seg.mask.as_ref().filter(|_| seg.status == MaskStatus::Ready)
+            .ok_or_else(|| AppError::Msg("Calculez d'abord le masque du sujet.".into()))?;
+        Ok((p.resolve(&mask.dir)?, p.resolve(&shadow_rel(p).unwrap())?))
+    })?;
+    if !out.exists() {
+        let w = worker_for(&app).await?;
+        let tmp = out.with_extension("part");
+        let (m2, t2) = (masks.clone(), tmp.clone());
+        blocking(move || w.request("contact_shadows", json!({"masks_dir": m2, "out_dir": t2}))).await?;
+        std::fs::rename(&tmp, &out)?;
+    }
+    with_project(&state, |p| Ok(view(p)))
+}
+
+#[derive(Serialize)]
+pub struct ElementItem {
+    pub path: String,
+    pub abs_path: String,
+    pub meta: serde_json::Value,
+    pub width: u32,
+    pub height: u32,
+}
+
+const ELEMENTS: &str = "assets/elements";
+
+fn list_elements_of(p: &Project, ffprobe: &Path) -> Vec<ElementItem> {
+    let mut items: Vec<ElementItem> = fs::read_dir(p.dir.join(ELEMENTS)).into_iter().flatten().flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "png") && !e.path().to_string_lossy().contains(".tmp."))
+        .map(|e| {
+            let path = e.path();
+            let (w, h) = media::probe_image(ffprobe, &path).unwrap_or((0, 0));
+            ElementItem {
+                path: format!("{ELEMENTS}/{}", path.file_name().unwrap().to_string_lossy()),
+                abs_path: path.display().to_string(),
+                meta: fs::read_to_string(path.with_extension("json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({})),
+                width: w, height: h,
+            }
+        }).collect();
+    items.sort_by(|a, b| b.path.cmp(&a.path));
+    items
+}
+
+#[tauri::command]
+pub fn list_elements(state: State<'_, AppState>) -> Result<Vec<ElementItem>> {
+    let ffprobe = state.tools.ffprobe.clone();
+    with_project(&state, |p| Ok(list_elements_of(p, &ffprobe)))
+}
+
+/// Détoure l'objet central d'une image (SAM 2 : rectangle presque plein cadre + point central),
+/// puis écrit un PNG RGBA recadré sur l'objet.
+async fn cutout_element(app: &AppHandle, state: &AppState, src: &Path, dest: &Path) -> Result<()> {
+    let work = dest.with_extension("cut");
+    let frames = work.join("frames");
+    fs::create_dir_all(&frames)?;
+    let ffmpeg = state.tools.ffmpeg.clone();
+    let (ffm, s, j) = (ffmpeg.clone(), src.to_path_buf(), frames.join("00000.jpg"));
+    blocking(move || {
+        let o = std::process::Command::new(&ffm).args(["-v", "error", "-y", "-i"]).arg(&s).args(["-q:v", "2"]).arg(&j).output()?;
+        if o.status.success() { Ok(()) } else { err("Image d'élément illisible.") }
+    }).await?;
+    let (iw, ih) = media::probe_image(&state.tools.ffprobe, &frames.join("00000.jpg"))?;
+    let w = worker_for(app).await?;
+    let mask = work.join("mask.png");
+    let (f2, m2) = (frames.clone(), mask.clone());
+    let (bx, by) = (iw as f64 * 0.03, ih as f64 * 0.03);
+    let r = blocking(move || w.request("preview", json!({"frames_dir": f2, "frame": 0, "out_png": m2,
+        "prompts": [{"frame": 0, "box": [bx, by, iw as f64 - bx, ih as f64 - by],
+                     "points": [{"x": iw as f64 / 2.0, "y": ih as f64 / 2.0, "positive": true}]}]}))).await?;
+    let bbox = r["bbox"].as_array().map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u32).collect::<Vec<_>>())
+        .filter(|b| b.len() == 4).ok_or_else(|| AppError::Msg("Aucun objet détecté dans l'image.".into()))?;
+    let (x0, y0, x1, y1) = (bbox[0], bbox[1], bbox[2], bbox[3]);
+    let (s2, m3, d2) = (src.to_path_buf(), mask.clone(), dest.to_path_buf());
+    let res = blocking(move || {
+        let tmp = d2.with_extension("tmp.png");
+        let o = std::process::Command::new(&ffmpeg).args(["-v", "error", "-y", "-i"]).arg(&s2).arg("-i").arg(&m3)
+            .args(["-filter_complex", &format!("[0:v]scale={iw}:{ih},format=rgba[i];[1:v]format=gray,gblur=sigma=0.8[m];[i][m]alphamerge,crop={}:{}:{x0}:{y0}", x1 - x0, y1 - y0),
+                   "-frames:v", "1"]).arg(&tmp).output()?;
+        if !o.status.success() {
+            return err(format!("Détourage de l'élément impossible : {}", String::from_utf8_lossy(&o.stderr).trim()));
+        }
+        fs::rename(&tmp, &d2)?;
+        Ok(())
+    }).await;
+    let _ = fs::remove_dir_all(&work);
+    res
+}
+
+/// Génère un élément (FLUX.2, objet isolé sur fond uni) puis le détoure automatiquement.
+#[tauri::command]
+pub async fn create_element(app: AppHandle, state: State<'_, AppState>, prompt: String, seed: Option<u32>) -> Result<Vec<ElementItem>> {
+    let _busy = BusyGuard::acquire(&state.busy, "création d'élément")?;
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() || prompt.chars().count() > 600 {
+        return err("Décrivez l'élément (600 caractères au maximum).");
+    }
+    let seed_v = seed.unwrap_or_else(|| chrono::Local::now().timestamp_subsec_nanos() & 0x00FF_FFFF);
+    let (root, raw, dest) = with_project(&state, |p| {
+        fs::create_dir_all(p.dir.join(ELEMENTS))?;
+        let id = format!("el_{}_{seed_v}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        Ok((p.dir.clone(), p.resolve(&format!("cache/elements/{id}_raw.png"))?, p.resolve(&format!("{ELEMENTS}/{id}.png"))?))
+    })?;
+    fs::create_dir_all(raw.parent().unwrap())?;
+    let full = format!("{prompt}. Un seul objet entier, centré, vue de face à hauteur d'yeux, isolé sur un fond de studio uni gris clair, éclairage doux, photographie réaliste, aucune personne.");
+    let app2 = app.clone();
+    let w_img = blocking(move || image_worker(&app2.state::<AppState>(), &app2, &root)).await?;
+    let (fp, rp) = (full.clone(), raw.clone());
+    let gen = blocking(move || w_img.request("generate", json!({"prompt": fp, "width": 1024, "height": 1024, "seed": seed_v, "steps": 4, "out_png": rp}))).await?;
+    stop_image_worker(&state);
+    cutout_element(&app, &state, &raw, &dest).await?;
+    let _ = fs::remove_file(&raw);
+    let _ = fs::remove_file(raw.with_extension("json"));
+    backgrounds::write_meta(&dest, &json!({"source": "generated", "prompt": prompt, "seed": seed_v, "model": gen["model"],
+        "license": gen["license"], "seconds": gen["seconds"], "cutout": "SAM 2.1 tiny", "created_at": project::now()}))?;
+    let ffprobe = state.tools.ffprobe.clone();
+    with_project(&state, |p| Ok(list_elements_of(p, &ffprobe)))
+}
+
+/// Importe une image d'élément. Un PNG qui a déjà une transparence est gardé tel quel ; sinon
+/// l'objet central est détouré automatiquement.
+#[tauri::command]
+pub async fn import_element(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<Vec<ElementItem>> {
+    let _busy = BusyGuard::acquire(&state.busy, "import d'élément")?;
+    let src = PathBuf::from(&path);
+    let ext = src.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+    if !backgrounds::IMAGE_EXT.contains(&ext.as_str()) {
+        return err("Format d'élément non pris en charge (PNG, JPEG ou WebP).");
+    }
+    let dest = with_project(&state, |p| {
+        fs::create_dir_all(p.dir.join(ELEMENTS))?;
+        p.resolve(&format!("{ELEMENTS}/imp_{}.png", &project::fingerprint(&src)?[..16]))
+    })?;
+    let pix = std::process::Command::new(&state.tools.ffprobe).args(["-v", "error", "-select_streams", "v:0", "-show_entries",
+        "stream=pix_fmt", "-of", "csv=p=0"]).arg(&src).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let has_alpha = pix.contains("rgba") || pix.contains("ya") || pix.starts_with("pal8") || pix.contains("argb");
+    if has_alpha {
+        let o = std::process::Command::new(&state.tools.ffmpeg).args(["-v", "error", "-y", "-i"]).arg(&src)
+            .args(["-frames:v", "1", "-pix_fmt", "rgba"]).arg(&dest).output()?;
+        if !o.status.success() {
+            return err("Image d'élément illisible.");
+        }
+    } else {
+        cutout_element(&app, &state, &src, &dest).await?;
+    }
+    backgrounds::write_meta(&dest, &json!({"source": "imported", "original_name": src.file_name().map(|n| n.to_string_lossy().to_string()),
+        "cutout": if has_alpha { "transparence d'origine" } else { "SAM 2.1 tiny" }, "created_at": project::now()}))?;
+    let ffprobe = state.tools.ffprobe.clone();
+    with_project(&state, |p| Ok(list_elements_of(p, &ffprobe)))
 }
 
 // --- Décor animé (étape 5, expérimental) ----------------------------------------------------
