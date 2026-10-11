@@ -16,7 +16,21 @@ export interface Composite {
   background: string | null; background_color: string;
   subject_scale: number; subject_x: number; subject_y: number;
   feather: number; brightness: number; contrast: number; saturation: number;
-  edge: number; temperature: number;
+  edge: number; temperature: number; bg_blur: number;
+}
+
+export interface GenerationSettings { backend: string; comfy_url: string }
+
+export interface BackgroundItem {
+  id: string; path: string; abs_path: string; source: "imported" | "generated"; created_at: string;
+  meta: { prompt?: string; seed?: number; model?: string; backend?: string; workflow?: string; workflow_version?: number;
+          workflow_tested?: boolean; license?: string; seconds?: number; width?: number; height?: number; original_name?: string };
+}
+
+export interface WorkflowStatus { id: string; version: number; title: string; description: string; tested: boolean; ready: boolean; problems: string[] }
+export interface ImageBackends {
+  builtin_ok: boolean; builtin_detail: string; settings: GenerationSettings;
+  comfy: { url: string; reachable: boolean; version: string | null; detail: string; workflows: WorkflowStatus[] };
 }
 
 export type ExportQuality = "fast" | "balanced" | "high";
@@ -52,6 +66,7 @@ export interface Manifest {
   composite: Composite;
   exports: ExportRecord[];
   export_settings: { quality: ExportQuality };
+  generation: GenerationSettings;
 }
 
 export interface ProjectView {
@@ -86,10 +101,21 @@ export const api = {
   setExportQuality: (quality: ExportQuality) => invoke<ProjectView>("set_export_quality", { quality }),
   diskUsage: () => invoke<DiskUsage>("disk_usage"),
   cleanCache: () => invoke<DiskUsage>("clean_cache"),
+  listBackgrounds: () => invoke<BackgroundItem[]>("list_backgrounds"),
+  selectBackground: (rel: string) => invoke<ProjectView>("select_background", { rel }),
+  deleteBackground: (rel: string) => invoke<BackgroundItem[]>("delete_background", { rel }),
+  imageBackends: () => invoke<ImageBackends>("image_backends"),
+  setGeneration: (settings: GenerationSettings) => invoke<ProjectView>("set_generation", { settings }),
+  generateBackgrounds: (prompt: string, count: number, seed: number | null) =>
+    invoke<BackgroundItem[]>("generate_backgrounds", { prompt, count, seed }),
 };
 
 export function onMaskProgress(cb: (done: number, total: number) => void): Promise<UnlistenFn> {
   return listen<{ done: number; total: number }>("mask-progress", (e) => cb(e.payload.done, e.payload.total));
+}
+
+export function onImageProgress(cb: (p: { index?: number; count?: number; done: number; total: number }) => void): Promise<UnlistenFn> {
+  return listen<{ index?: number; count?: number; done: number; total: number }>("image-progress", (e) => cb(e.payload));
 }
 
 export function onExportProgress(cb: (fraction: number) => void): Promise<UnlistenFn> {

@@ -1,3 +1,5 @@
+mod backgrounds;
+mod comfy;
 mod commands;
 mod env;
 mod error;
@@ -32,6 +34,12 @@ pub fn run() {
             commands::cancel_job,
             commands::unload_models,
             commands::set_background,
+            commands::select_background,
+            commands::list_backgrounds,
+            commands::delete_background,
+            commands::image_backends,
+            commands::set_generation,
+            commands::generate_backgrounds,
             commands::set_composite,
             commands::export_video,
             commands::project_path,
@@ -45,8 +53,8 @@ pub fn run() {
             // Fermer la fenêtre arrête proprement le worker Python.
             if let tauri::WindowEvent::Destroyed = event {
                 let state = window.state::<commands::AppState>();
-                let worker = state.worker.lock().unwrap().take();
-                if let Some(w) = worker {
+                let workers = [state.worker.lock().unwrap().take(), state.image_worker.lock().unwrap().take()];
+                for w in workers.into_iter().flatten() {
                     w.shutdown();
                 }
             }

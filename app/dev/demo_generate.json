@@ -1,0 +1,11 @@
+{
+  "background": "",
+  "start": 4,
+  "duration": 4,
+  "box": [710, 205, 900, 719],
+  "points": [[790, 240], [775, 420], [805, 570]],
+  "generate_prompt": "chemin de randonnée en montagne au bord d'un lac alpin, fin d'après-midi. Photographie réaliste, plan large à hauteur d'yeux, scène vide sans personne, sol visible au premier plan, faible profondeur de champ.",
+  "framing": "third-left",
+  "lighting": "golden",
+  "export_quality": "balanced"
+}

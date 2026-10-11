@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api, errorText, fileUrl, formatBytes, formatTime, frameName, onExportProgress, onMaskProgress,
   type Composite, type DiskUsage, type ExportQuality, type ExportRecord, type MaskQuality, type Prompt, type ProjectView,
 } from "../api";
-import { harmonize, loadImage, preload } from "../compositor";
+import { framing, harmonize, LIGHTING, loadImage, preload, subjectBounds, type FramingPreset } from "../compositor";
+import BackgroundLibrary from "./BackgroundLibrary.vue";
 import FrameViewer, { type Tool, type ViewMode } from "./FrameViewer.vue";
 
 const props = defineProps<{ initial: ProjectView }>();
@@ -146,19 +146,42 @@ async function propagate() {
 }
 
 // --- Décor ---------------------------------------------------------------------
-async function importBackground() {
-  const path = await open({ title: "Choisir une image de décor", multiple: false,
-    filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "webp", "PNG", "JPG", "JPEG"] }] });
-  if (!path || Array.isArray(path)) return;
-  const r = await run(() => api.setBackground(path));
-  if (r) { apply(r); composite.value.background = r.manifest.composite.background; }
-  mode.value = "composite";
+const library = ref<InstanceType<typeof BackgroundLibrary> | null>(null);
+
+/** Le décor a changé côté projet (import, génération, choix) : on aligne l'état local du composite. */
+function onLibraryApplied(v: ProjectView) {
+  apply(v);
+  composite.value.background = v.manifest.composite.background;
+  if (pv.value.mask_dir) mode.value = "composite";
 }
 
 async function removeBackground() {
   const r = await run(() => api.setBackground(null));
   if (r) { apply(r); composite.value.background = null; }
 }
+
+// Cadrage : boîte du sujet réunie sur 5 images réparties dans l'extrait, pour que le mouvement reste dans le cadre.
+async function applyFraming(preset: FramingPreset) {
+  if (!pv.value.mask_dir || !frames.value) return;
+  await run(async () => {
+    const idx = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * (frames.value - 1)));
+    const masks = await Promise.all(idx.map((i) => loadImage(fileUrl(`${pv.value.mask_dir}/${frameName(i)}.png`))));
+    const b = subjectBounds(masks);
+    if (!b) throw new Error("Masque vide : impossible de cadrer le sujet.");
+    composite.value = { ...composite.value, ...framing(preset, b, composite.value) };
+  });
+  mode.value = "composite";
+}
+
+function applyLighting(key: string) {
+  composite.value = { ...composite.value, ...LIGHTING[key].values };
+  mode.value = "composite";
+}
+
+const FRAMINGS: { id: FramingPreset; label: string }[] = [
+  { id: "center", label: "Centré" }, { id: "ground", label: "En pied, au sol" },
+  { id: "third-left", label: "Tiers gauche" }, { id: "third-right", label: "Tiers droit" }, { id: "closeup", label: "Plan serré" },
+];
 
 let compositeTimer: number | undefined;
 watch(composite, (c) => {
@@ -170,7 +193,7 @@ watch(composite, (c) => {
 }, { deep: true });
 
 function resetLook() {
-  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0 };
+  composite.value = { ...composite.value, subject_scale: 1, subject_x: 0, subject_y: 0, feather: 1.5, brightness: 0, contrast: 1, saturation: 1, edge: 0, temperature: 0, bg_blur: 0 };
 }
 
 async function toggleCleanup(ev: Event) {
@@ -265,6 +288,8 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 interface DemoSpec {
   background: string; start: number; duration: number; box: [number, number, number, number]; points: [number, number][];
   export_quality?: ExportQuality;
+  /** Étape 3 : génère le décor au lieu de l'importer, puis applique un cadrage et une lumière. */
+  generate_prompt?: string; framing?: FramingPreset; lighting?: string;
 }
 async function runDemo(spec: DemoSpec) {
   const mark = async (s: string) => { await api.devLog(`DEMO ${s}`); await pause(2500); };
@@ -273,9 +298,20 @@ async function runDemo(spec: DemoSpec) {
   for (const [x, y] of spec.points) await onPoint(x, y, true);
   await mark("2-preview");
   await propagate(); frame.value = flaggedList.value[0]?.frame ?? Math.floor(frames.value / 2); await mark("3-quality");
-  step.value = "background"; await api.setBackground(spec.background).then(apply);
-  composite.value = { ...composite.value, background: m.value.composite.background, edge: 0.1 };
-  mode.value = "composite"; await pause(500); await autoHarmonize(); await mark("4-harmonized-split");
+  step.value = "background";
+  if (spec.generate_prompt) {
+    await pause(800);
+    const made = await api.generateBackgrounds(spec.generate_prompt, 2, 1234);
+    onLibraryApplied(await api.selectBackground(made[0].path));
+    await library.value?.refresh();
+  } else {
+    onLibraryApplied(await api.setBackground(spec.background));
+  }
+  composite.value = { ...composite.value, edge: 0.1 };
+  mode.value = "composite"; await pause(500);
+  if (spec.framing) await applyFraming(spec.framing);
+  if (spec.lighting) applyLighting(spec.lighting); else await autoHarmonize();
+  mode.value = "composite"; await mark("4-decor");
   step.value = "export"; if (spec.export_quality) await setQuality(spec.export_quality);
   await refreshDisk(); await exportVideo(); await refreshDisk(); await mark("5-exported");
   if (error.value) await api.devLog(`DEMO error ${error.value}`);
@@ -427,13 +463,17 @@ function stepState(id: Step) {
         <!-- Décor -->
         <template v-else-if="step === 'background'">
           <h2>Décor et intégration</h2>
+          <BackgroundLibrary ref="library" :pv="pv" :busy="!!job" @applied="onLibraryApplied" @error="error = $event" />
           <div class="row">
-            <button class="primary" @click="importBackground">Importer une image…</button>
-            <button v-if="m.composite.background" @click="removeBackground">Retirer</button>
+            <button v-if="m.composite.background" @click="removeBackground">Fond uni à la place</button>
           </div>
           <label v-if="!m.composite.background">Couleur de fond<input id="bg-color" type="text" v-model="composite.background_color" /></label>
+          <label v-else>Flou du décor (profondeur de champ) <span class="mono">{{ composite.bg_blur.toFixed(1) }}</span><input id="bg-blur" type="range" min="0" max="20" step="0.5" v-model.number="composite.bg_blur" /></label>
           <fieldset>
-            <legend>Sujet</legend>
+            <legend>Cadrage</legend>
+            <div class="presets">
+              <button v-for="f in FRAMINGS" :key="f.id" :disabled="!pv.mask_dir" @click="applyFraming(f.id)">{{ f.label }}</button>
+            </div>
             <label>Échelle <span class="mono">{{ composite.subject_scale.toFixed(2) }}</span><input id="scale" type="range" min="0.2" max="2" step="0.01" v-model.number="composite.subject_scale" /></label>
             <label>Position X <span class="mono">{{ composite.subject_x.toFixed(2) }}</span><input id="pos-x" type="range" min="-0.8" max="0.8" step="0.01" v-model.number="composite.subject_x" /></label>
             <label>Position Y <span class="mono">{{ composite.subject_y.toFixed(2) }}</span><input id="pos-y" type="range" min="-0.8" max="0.8" step="0.01" v-model.number="composite.subject_y" /></label>
@@ -441,7 +481,10 @@ function stepState(id: Step) {
             <label>Bord : étendre ↔ rétrécir <span class="mono">{{ composite.edge.toFixed(2) }}</span><input id="edge" type="range" min="-0.5" max="0.5" step="0.01" v-model.number="composite.edge" /></label>
           </fieldset>
           <fieldset>
-            <legend>Couleur du sujet</legend>
+            <legend>Lumière et couleur du sujet</legend>
+            <div class="presets">
+              <button v-for="(l, key) in LIGHTING" :key="key" @click="applyLighting(key as string)">{{ l.label }}</button>
+            </div>
             <label>Luminosité <span class="mono">{{ composite.brightness.toFixed(2) }}</span><input id="brightness" type="range" min="-0.3" max="0.3" step="0.01" v-model.number="composite.brightness" /></label>
             <label>Contraste <span class="mono">{{ composite.contrast.toFixed(2) }}</span><input id="contrast" type="range" min="0.6" max="1.6" step="0.01" v-model.number="composite.contrast" /></label>
             <label>Saturation <span class="mono">{{ composite.saturation.toFixed(2) }}</span><input id="saturation" type="range" min="0" max="2" step="0.01" v-model.number="composite.saturation" /></label>
@@ -517,6 +560,8 @@ function stepState(id: Step) {
 .qstrip { position: absolute; left: 0; right: 0; bottom: -9px; height: 5px; }
 .qstrip span { position: absolute; width: 3px; height: 5px; margin-left: -1px; background: var(--warn); cursor: pointer; }
 .flag-note { margin-left: auto; align-self: center; color: var(--warn); font-size: 12px; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.presets button { padding: 3px 8px; font-size: 12px; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--fg); }
 .quality { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; }
 .qhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

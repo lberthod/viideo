@@ -5,6 +5,8 @@ sans coût d'API par défaut. Spécification complète : [docs/brief.md](docs/br
 
 ## État
 
+**Étape 3 — création assistée : terminée.** Bibliothèque de décors, génération locale (FLUX.2 klein), adaptateur ComfyUI versionné et sécurisé, préréglages de cadrage et de lumière, flou du décor. Voir [docs/stage3/README.md](docs/stage3/README.md).
+
 **Étape 2 — cohérence et qualité : terminée.** Propagation par blocs avec reprise, nettoyage et détection de dérive, avant/après, harmonisation des couleurs, préréglages d'export, gestion du cache. Voir [docs/stage2/README.md](docs/stage2/README.md).
 
 **Étape 1 — MVP manuel : terminé.** App Tauri + Vue + Rust : import, extrait, sélection du sujet, masque SAM 2 propagé et corrigeable, décor, export MP4. Voir [docs/stage1/README.md](docs/stage1/README.md).
@@ -26,7 +28,7 @@ mkdir -p models/sam2 && cd models/sam2 && for m in tiny small; do curl -LO https
 
 # Environnement image (diffusers, modèle déjà présent dans le cache Hugging Face)
 uv venv --python 3.12 .venvs/image
-uv pip install --python .venvs/image/bin/python torch diffusers transformers accelerate psutil
+uv pip install --python .venvs/image/bin/python torch diffusers transformers accelerate psutil pytest
 
 # Clips de test : voir stage0/clips.json (URLs Mixkit) -> clips/source/mixkit-<id>.mp4
 

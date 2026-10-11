@@ -39,6 +39,11 @@ pub struct Tools {
     pub python: PathBuf,
     pub worker: PathBuf,
     pub models: PathBuf,
+    /// Worker de génération d'image et son Python (environnement séparé : diffusers).
+    pub image_python: PathBuf,
+    pub image_worker: PathBuf,
+    /// Workflows ComfyUI versionnés.
+    pub workflows: PathBuf,
     /// Encodeur matériel H.264 disponible dans ce FFmpeg.
     pub videotoolbox: bool,
 }
@@ -57,6 +62,9 @@ impl Tools {
             python: from_env_or("VIDEEO_PYTHON", root.join(".venvs/vision/bin/python")),
             worker: from_env_or("VIDEEO_WORKER", root.join("workers/vision/worker.py")),
             models: from_env_or("VIDEEO_MODELS", root.join("models/sam2")),
+            image_python: from_env_or("VIDEEO_IMAGE_PYTHON", root.join(".venvs/image/bin/python")),
+            image_worker: from_env_or("VIDEEO_IMAGE_WORKER", root.join("workers/image/worker.py")),
+            workflows: from_env_or("VIDEEO_WORKFLOWS", root.join("workflows/comfyui")),
         }
     }
 }
@@ -91,6 +99,9 @@ pub fn check(tools: &Tools) -> Vec<ToolStatus> {
                         detail: py.unwrap_or_else(|| "environnement absent ou SAM 2 non installé".into()) });
     v.push(ToolStatus { name: "Worker vision".into(), path: tools.worker.display().to_string(), ok: tools.worker.exists(),
                         detail: if tools.worker.exists() { "présent".into() } else { "introuvable".into() } });
+    let img = first_line(&tools.image_python, &["-c", "import diffusers; from diffusers import Flux2KleinPipeline; print('diffusers', diffusers.__version__)"]);
+    v.push(ToolStatus { name: "Python image (décors)".into(), path: tools.image_python.display().to_string(), ok: img.is_some(),
+                        detail: img.unwrap_or_else(|| "optionnel : génération de décors indisponible".into()) });
     let tiny = tools.models.join("sam2.1_hiera_tiny.pt");
     v.push(ToolStatus { name: "Poids SAM 2.1 tiny".into(), path: tiny.display().to_string(), ok: tiny.exists(),
                         detail: if tiny.exists() { "présent".into() } else { "manquant".into() } });

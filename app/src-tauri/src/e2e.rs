@@ -80,3 +80,46 @@ fn full_pipeline() {
     p.save().unwrap();
     assert!(Project::open(&dir).is_ok(), "le projet se rouvre");
 }
+
+/// Adaptateur ComfyUI contre un vrai serveur local (lancé à part) :
+///   VIDEEO_E2E_COMFY=http://127.0.0.1:8188 cargo test e2e_comfy -- --ignored --nocapture
+#[test]
+#[ignore]
+fn e2e_comfy() {
+    use std::collections::BTreeMap;
+    use crate::comfy;
+    let url = std::env::var("VIDEEO_E2E_COMFY").unwrap_or_else(|_| "http://127.0.0.1:8188".into());
+    let tools = Tools::detect();
+    let wfs = comfy::load_workflows(&tools.workflows).unwrap();
+    let st = comfy::status(&url, &wfs);
+    println!("serveur {} {:?} : {}", st.url, st.version, st.detail);
+    for w in &st.workflows {
+        println!("  {} v{} prêt={} {:?}", w.id, w.version, w.ready, w.problems);
+    }
+    assert!(st.reachable);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("out.png");
+    let solid = wfs.iter().find(|w| w.id == "solid-color").unwrap();
+    let mut params = BTreeMap::new();
+    params.insert("width".to_string(), json!(320));
+    params.insert("height".to_string(), json!(176));
+    params.insert("seed".to_string(), json!(0x3366cc));
+    let r = comfy::run(&url, solid, &params, &dest, &|| false).unwrap();
+    let size = crate::media::probe_image(&tools.ffprobe, &dest).unwrap();
+    println!("solid-color : {:.1} s, prompt {}, image {:?}", r.seconds, r.prompt_id, size);
+    assert_eq!(size, (320, 176));
+
+    // FLUX.2 sans les poids au format ComfyUI : refus explicite, sans soumission.
+    let flux = wfs.iter().find(|w| w.id == "flux2-klein-t2i").unwrap();
+    let e = comfy::run(&url, flux, &BTreeMap::new(), &tmp.path().join("f.png"), &|| false).err().unwrap().to_string();
+    println!("flux2 : {e}");
+    assert!(e.contains("modèle manquant"));
+
+    // Un workflow utilisant un nœud d'API distant est refusé avant tout envoi.
+    let mut remote = solid.clone();
+    remote.graph["1"] = json!({"class_type": "Flux2ProImageNode", "inputs": {"prompt": "x", "width": 512, "height": 512, "seed": 0, "prompt_upsampling": false}});
+    let e = comfy::run(&url, &remote, &BTreeMap::new(), &tmp.path().join("r.png"), &|| false).err().unwrap().to_string();
+    println!("nœud distant : {e}");
+    assert!(e.contains("service en ligne"));
+}

@@ -28,22 +28,33 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// Démarre le worker, limité en lecture/écriture au dossier `root` (le projet).
+    /// Démarre le worker vision, limité en lecture/écriture au dossier `root` (le projet).
     pub fn spawn(tools: &Tools, root: &Path, on_progress: impl Fn(Value) + Send + 'static) -> Result<Arc<Worker>> {
-        if !tools.python.exists() {
-            return err(format!("Python du worker vision introuvable : {}", tools.python.display()));
+        let args = vec!["--models-dir".into(), tools.models.display().to_string()];
+        Self::spawn_script("vision", &tools.python, &tools.worker, args, root, on_progress)
+    }
+
+    /// Démarre le worker image (génération de décors).
+    pub fn spawn_image(tools: &Tools, root: &Path, on_progress: impl Fn(Value) + Send + 'static) -> Result<Arc<Worker>> {
+        Self::spawn_script("image", &tools.image_python, &tools.image_worker, vec![], root, on_progress)
+    }
+
+    fn spawn_script(kind: &'static str, python: &Path, script: &Path, args: Vec<String>, root: &Path,
+                    on_progress: impl Fn(Value) + Send + 'static) -> Result<Arc<Worker>> {
+        if !python.exists() {
+            return err(format!("Python du worker {kind} introuvable : {}", python.display()));
         }
-        let mut child = Command::new(&tools.python)
+        let mut child = Command::new(python)
             .arg("-u")
-            .arg(&tools.worker)
-            .arg("--models-dir").arg(&tools.models)
+            .arg(script)
+            .args(&args)
             .arg("--root").arg(root)
             .env("PYTORCH_ENABLE_MPS_FALLBACK", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| AppError::Msg(format!("Impossible de lancer le worker vision : {e}")))?;
+            .map_err(|e| AppError::Msg(format!("Impossible de lancer le worker {kind} : {e}")))?;
         let stdin = child.stdin.take().expect("stdin");
         let stdout = child.stdout.take().expect("stdout");
         let stderr = child.stderr.take().expect("stderr");
@@ -72,7 +83,7 @@ impl Worker {
             }
         });
         // stderr du worker : journal de diagnostic (warnings PyTorch, traces d'erreur).
-        let log_path = root.join("logs/worker.log");
+        let log_path = root.join(format!("logs/worker_{kind}.log"));
         std::thread::spawn(move || {
             let mut log = std::fs::OpenOptions::new().create(true).append(true).open(log_path).ok();
             for line in BufReader::new(stderr).lines().map_while(|l| l.ok()) {
@@ -83,7 +94,7 @@ impl Worker {
         });
 
         ready_rx.recv_timeout(Duration::from_secs(60))
-            .map_err(|_| AppError::Msg("Le worker vision n'a pas démarré (voir logs/worker.log du projet).".into()))?;
+            .map_err(|_| AppError::Msg(format!("Le worker {kind} n'a pas démarré (voir logs/worker_{kind}.log du projet).")))?;
         Ok(Arc::new(Worker {
             stdin: Mutex::new(stdin),
             child: Mutex::new(child),

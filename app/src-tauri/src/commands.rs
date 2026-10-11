@@ -10,25 +10,39 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::backgrounds::{self, BackgroundItem};
+use crate::comfy;
 use crate::env::{self, Tools, ToolStatus};
 use crate::error::{err, AppError, Result};
 use crate::media::{self, ExportJob, Probe};
-use crate::project::{self, Composite, ExportQuality, ExportRecord, Mask, MaskStatus, Project, Prompt, Proxy, MAX_CLIP_SECONDS};
+use crate::project::{self, Composite, ExportQuality, ExportRecord, GenerationSettings, Mask, MaskStatus, Project, Prompt, Proxy, MAX_CLIP_SECONDS};
 use crate::worker::Worker;
 
 pub struct AppState {
     pub tools: Tools,
     pub project: Mutex<Option<Project>>,
     pub worker: Mutex<Option<Arc<Worker>>>,
+    /// Worker de génération d'image. Jamais chargé en même temps que le worker vision :
+    /// un seul modèle lourd en mémoire (SAM 2 ≤ 7 Go, FLUX.2 klein ≈ 24 Go).
+    pub image_worker: Mutex<Option<Arc<Worker>>>,
     pub export_child: Arc<Mutex<Option<Child>>>,
-    /// Une seule tâche lourde à la fois (propagation ou export).
+    /// Annulation d'une génération via ComfyUI.
+    pub comfy_cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// Une seule tâche lourde à la fois (propagation, génération ou export).
     pub busy: Mutex<Option<&'static str>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        AppState { tools: Tools::detect(), project: Mutex::new(None), worker: Mutex::new(None),
-                   export_child: Arc::new(Mutex::new(None)), busy: Mutex::new(None) }
+        AppState { tools: Tools::detect(), project: Mutex::new(None), worker: Mutex::new(None), image_worker: Mutex::new(None),
+                   export_child: Arc::new(Mutex::new(None)), comfy_cancel: Arc::new(Default::default()), busy: Mutex::new(None) }
+    }
+}
+
+fn stop_image_worker(state: &AppState) {
+    let w = state.image_worker.lock().unwrap().take();
+    if let Some(w) = w {
+        w.shutdown();
     }
 }
 
@@ -86,7 +100,16 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
 }
 
 fn replace_worker(state: &AppState) {
-    if let Some(w) = state.worker.lock().unwrap().take() {
+    let w = state.worker.lock().unwrap().take();
+    if let Some(w) = w {
+        w.shutdown();
+    }
+    stop_image_worker(state);
+}
+
+fn stop_vision_worker(state: &AppState) {
+    let w = state.worker.lock().unwrap().take();
+    if let Some(w) = w {
         w.shutdown();
     }
 }
@@ -246,6 +269,7 @@ fn ensure_worker(state: &AppState, app: &AppHandle) -> Result<Arc<Worker>> {
     let w = match reuse {
         Some(w) => w,
         None => {
+            stop_image_worker(state);
             if let Some(old) = slot.take() {
                 old.shutdown();
             }
@@ -361,6 +385,10 @@ pub fn cancel_job(state: State<'_, AppState>) -> Result<()> {
     if let Some(w) = state.worker.lock().unwrap().as_ref() {
         w.cancel()?;
     }
+    if let Some(w) = state.image_worker.lock().unwrap().as_ref() {
+        w.cancel()?;
+    }
+    state.comfy_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(child) = state.export_child.lock().unwrap().as_mut() {
         let _ = child.kill();
     }
@@ -372,33 +400,170 @@ pub fn unload_models(state: State<'_, AppState>) {
     replace_worker(&state);
 }
 
-const IMAGE_EXT: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
-
+/// Importe une image externe dans la bibliothèque du projet et l'utilise comme décor (None : fond uni).
 #[tauri::command]
 pub fn set_background(state: State<'_, AppState>, path: Option<String>) -> Result<ProjectView> {
     with_project(&state, |p| {
-        match path {
-            None => p.manifest.composite.background = None,
-            Some(src) => {
-                let src = PathBuf::from(src);
-                let ext = src.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
-                if !IMAGE_EXT.contains(&ext.as_str()) {
-                    return err("Format de décor non pris en charge (PNG, JPEG ou WebP).");
-                }
-                let size = fs::metadata(&src)?.len();
-                if size > 100 * 1024 * 1024 {
-                    return err("Image de décor trop lourde (100 Mo au maximum).");
-                }
-                let rel = format!("assets/background_{}.{ext}", &project::fingerprint(&src)?[..16]);
-                let dest = p.resolve(&rel)?;
-                if !dest.exists() {
-                    fs::copy(&src, &dest)?;
-                }
-                p.manifest.composite.background = Some(rel);
-            }
-        }
+        p.manifest.composite.background = match path {
+            None => None,
+            Some(src) => Some(backgrounds::import(p, Path::new(&src))?),
+        };
         p.touch_and_save()?;
         Ok(view(p))
+    })
+}
+
+/// Choisit un décor déjà présent dans la bibliothèque du projet.
+#[tauri::command]
+pub fn select_background(state: State<'_, AppState>, rel: String) -> Result<ProjectView> {
+    with_project(&state, |p| {
+        if !rel.starts_with("assets/") || !p.resolve(&rel)?.exists() {
+            return err("Ce décor n'existe pas dans le projet.");
+        }
+        p.manifest.composite.background = Some(rel);
+        p.touch_and_save()?;
+        Ok(view(p))
+    })
+}
+
+#[tauri::command]
+pub fn list_backgrounds(state: State<'_, AppState>) -> Result<Vec<BackgroundItem>> {
+    with_project(&state, |p| Ok(backgrounds::list(p)))
+}
+
+#[tauri::command]
+pub fn delete_background(state: State<'_, AppState>, rel: String) -> Result<Vec<BackgroundItem>> {
+    with_project(&state, |p| {
+        backgrounds::delete(p, &rel)?;
+        Ok(backgrounds::list(p))
+    })
+}
+
+#[derive(Serialize)]
+pub struct ImageBackends {
+    pub builtin_ok: bool,
+    pub builtin_detail: String,
+    pub comfy: comfy::ServerStatus,
+    pub settings: GenerationSettings,
+}
+
+#[tauri::command]
+pub async fn image_backends(state: State<'_, AppState>) -> Result<ImageBackends> {
+    let settings = with_project(&state, |p| Ok(p.manifest.generation.clone()))?;
+    let tools = state.tools.clone();
+    blocking(move || {
+        let builtin_ok = tools.image_python.exists() && tools.image_worker.exists();
+        let workflows = comfy::load_workflows(&tools.workflows).unwrap_or_default();
+        let comfy = comfy::status(&settings.comfy_url, &workflows);
+        Ok(ImageBackends {
+            builtin_ok,
+            builtin_detail: if builtin_ok { "FLUX.2 [klein] 4B (Apache-2.0), local, depuis le cache Hugging Face".into() }
+                            else { format!("environnement absent : {}", tools.image_python.display()) },
+            comfy,
+            settings,
+        })
+    }).await
+}
+
+#[tauri::command]
+pub fn set_generation(state: State<'_, AppState>, settings: GenerationSettings) -> Result<ProjectView> {
+    comfy::validate_url(&settings.comfy_url)?;
+    if settings.backend != "builtin" && !settings.backend.starts_with("comfyui:") {
+        return err("Moteur de génération inconnu.");
+    }
+    with_project(&state, |p| {
+        p.manifest.generation = settings;
+        p.touch_and_save()?;
+        Ok(view(p))
+    })
+}
+
+fn image_worker(state: &AppState, app: &AppHandle, root: &Path) -> Result<Arc<Worker>> {
+    let mut slot = state.image_worker.lock().unwrap();
+    if let Some(w) = slot.as_ref().filter(|w| w.is_alive() && w.root == root) {
+        return Ok(w.clone());
+    }
+    if let Some(old) = slot.take() {
+        old.shutdown();
+    }
+    stop_vision_worker(state);
+    let app = app.clone();
+    let w = Worker::spawn_image(&state.tools, root, move |ev| {
+        let _ = app.emit("image-progress", json!({"done": ev["done"], "total": ev["total"]}));
+    })?;
+    *slot = Some(w.clone());
+    Ok(w)
+}
+
+/// Génère `count` décors (graines successives) avec le moteur du projet et les ajoute à la bibliothèque.
+#[tauri::command]
+pub async fn generate_backgrounds(app: AppHandle, state: State<'_, AppState>, prompt: String, count: u32, seed: Option<u32>) -> Result<Vec<BackgroundItem>> {
+    let _busy = BusyGuard::acquire(&state.busy, "génération de décor")?;
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() || prompt.chars().count() > 1500 {
+        return err("Décrivez le décor (1 500 caractères au maximum).");
+    }
+    if !(1..=4).contains(&count) {
+        return err("Entre 1 et 4 variantes.");
+    }
+    let (root, settings, (w, h)) = with_project(&state, |p| {
+        let pr = &p.manifest.source.probe;
+        let (ow, oh) = media::output_size(pr.display_width, pr.display_height);
+        Ok((p.dir.clone(), p.manifest.generation.clone(), backgrounds::generation_size(ow, oh)))
+    })?;
+    let base_seed = seed.unwrap_or_else(|| (chrono::Local::now().timestamp_subsec_nanos() ^ 0x5bd1e995) & 0x00FF_FFFF);
+    state.comfy_cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let mut made = Vec::new();
+    for i in 0..count {
+        let seed_i = (base_seed + i) & 0x00FF_FFFF;
+        let (rel, abs) = with_project(&state, |p| backgrounds::new_generated(p, seed_i))?;
+        let _ = app.emit("image-progress", json!({"index": i, "count": count, "done": 0, "total": 0}));
+        let meta = if settings.backend == "builtin" {
+            let app2 = app.clone();
+            let root2 = root.clone();
+            let w_img = blocking(move || image_worker(&app2.state::<AppState>(), &app2, &root2)).await?;
+            let (pr, out) = (prompt.clone(), abs.clone());
+            let r = blocking(move || w_img.request("generate", json!({"prompt": pr, "width": w, "height": h, "seed": seed_i, "steps": 4, "out_png": out}))).await?;
+            let mut m = r;
+            if let Some(o) = m.as_object_mut() {
+                o.remove("out_png");
+            }
+            m
+        } else {
+            let wf_id = settings.backend.trim_start_matches("comfyui:").to_string();
+            // ComfyUI a sa propre mémoire : on libère nos modèles avant.
+            stop_vision_worker(&state);
+            stop_image_worker(&state);
+            let tools = state.tools.clone();
+            let url = settings.comfy_url.clone();
+            let cancel = state.comfy_cancel.clone();
+            let (pr, out) = (prompt.clone(), abs.clone());
+            blocking(move || {
+                let wfs = comfy::load_workflows(&tools.workflows)?;
+                let wf = wfs.iter().filter(|x| x.id == wf_id).max_by_key(|x| x.version)
+                    .ok_or_else(|| AppError::Msg(format!("Workflow ComfyUI inconnu : {wf_id}")))?;
+                let mut params = std::collections::BTreeMap::new();
+                params.insert("prompt".into(), json!(pr));
+                params.insert("width".into(), json!(w));
+                params.insert("height".into(), json!(h));
+                params.insert("steps".into(), json!(4));
+                params.insert("seed".into(), json!(seed_i));
+                let r = comfy::run(&url, wf, &params, &out, &|| cancel.load(std::sync::atomic::Ordering::SeqCst))?;
+                Ok(json!({"backend": "comfyui", "workflow": wf.id, "workflow_version": wf.version, "workflow_tested": wf.tested,
+                          "comfy_prompt_id": r.prompt_id, "prompt": pr, "width": w, "height": h, "steps": 4, "seed": seed_i,
+                          "seconds": r.seconds}))
+            }).await?
+        };
+        let mut meta = meta;
+        meta["source"] = json!("generated");
+        meta["created_at"] = json!(project::now());
+        backgrounds::write_meta(&abs, &meta)?;
+        made.push(rel);
+    }
+    with_project(&state, |p| {
+        let all = backgrounds::list(p);
+        Ok(all.into_iter().filter(|b| made.contains(&b.path)).collect())
     })
 }
 

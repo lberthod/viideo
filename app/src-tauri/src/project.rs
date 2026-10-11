@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{err, Result};
 use crate::media::Probe;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 pub const MANIFEST: &str = "project.json";
 const SUBDIRS: [&str; 5] = ["media", "assets", "cache", "exports", "logs"];
 
@@ -44,6 +44,22 @@ pub struct Manifest {
     pub exports: Vec<ExportRecord>,
     #[serde(default)]
     pub export_settings: ExportSettings,
+    #[serde(default)]
+    pub generation: GenerationSettings,
+}
+
+/// Réglages de génération de décors du projet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GenerationSettings {
+    /// "builtin" (worker diffusers) ou "comfyui:<id du workflow>".
+    pub backend: String,
+    pub comfy_url: String,
+}
+
+impl Default for GenerationSettings {
+    fn default() -> Self {
+        GenerationSettings { backend: "builtin".into(), comfy_url: "http://127.0.0.1:8188".into() }
+    }
 }
 
 /// Préréglage d'export : rapide (veryfast), équilibré (medium), qualité (slow).
@@ -163,6 +179,9 @@ pub struct Composite {
     /// Température de couleur du sujet : > 0 plus chaud, < 0 plus froid (-0,5 à 0,5).
     #[serde(default)]
     pub temperature: f64,
+    /// Flou du décor (profondeur de champ simulée), en pixels de la sortie 720p.
+    #[serde(default)]
+    pub bg_blur: f64,
 }
 
 impl Default for Composite {
@@ -179,6 +198,7 @@ impl Default for Composite {
             saturation: 1.0,
             edge: 0.0,
             temperature: 0.0,
+            bg_blur: 0.0,
         }
     }
 }
@@ -195,6 +215,7 @@ impl Composite {
             ("saturation", self.saturation, 0.0, 2.0),
             ("bord", self.edge, -0.5, 0.5),
             ("température", self.temperature, -0.5, 0.5),
+            ("flou du décor", self.bg_blur, 0.0, 30.0),
         ];
         for (name, v, lo, hi) in checks {
             if !v.is_finite() || v < lo || v > hi {
@@ -285,6 +306,7 @@ impl Project {
             composite: Composite::default(),
             exports: vec![],
             export_settings: ExportSettings::default(),
+            generation: GenerationSettings::default(),
         };
         let p = Project { dir, manifest };
         p.save()?;
@@ -404,6 +426,11 @@ fn migrate(mut value: serde_json::Value, from: u32) -> Result<serde_json::Value>
                 value["composite"]["temperature"] = 0.0.into();
                 value["export_settings"] = serde_json::json!({"quality": "balanced"});
             }
+            // 2 -> 3 : flou du décor, réglages de génération.
+            2 => {
+                value["composite"]["bg_blur"] = 0.0.into();
+                value["generation"] = serde_json::to_value(GenerationSettings::default())?;
+            }
             _ => return err(format!("Aucune migration connue depuis le schéma {v}.")),
         }
         v += 1;
@@ -462,12 +489,16 @@ mod tests {
         v["composite"].as_object_mut().unwrap().remove("edge");
         v["composite"].as_object_mut().unwrap().remove("temperature");
         v.as_object_mut().unwrap().remove("export_settings");
+        v.as_object_mut().unwrap().remove("generation");
+        v["composite"].as_object_mut().unwrap().remove("bg_blur");
         fs::write(dir.join(MANIFEST), serde_json::to_vec(&v).unwrap()).unwrap();
         let q = Project::open(&dir).unwrap();
         assert_eq!(q.manifest.schema_version, SCHEMA_VERSION);
         assert!(q.manifest.segmentation.cleanup);
         assert_eq!(q.manifest.composite.edge, 0.0);
         assert_eq!(q.manifest.export_settings.quality, ExportQuality::Balanced);
+        assert_eq!(q.manifest.composite.bg_blur, 0.0);
+        assert_eq!(q.manifest.generation.backend, "builtin");
     }
 
     #[test]

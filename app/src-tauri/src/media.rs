@@ -129,7 +129,7 @@ pub fn extract_proxy(ffmpeg: &Path, ffprobe: &Path, src: &Path, start: f64, dura
     Ok(ProxyResult { width: first.0, height: first.1, frames })
 }
 
-fn probe_image(ffprobe: &Path, path: &Path) -> Result<(u32, u32)> {
+pub(crate) fn probe_image(ffprobe: &Path, path: &Path) -> Result<(u32, u32)> {
     let out = Command::new(ffprobe)
         .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x"])
         .arg(path).output()?;
@@ -203,6 +203,8 @@ pub fn filter_graph(job: &ExportJob) -> String {
     } else {
         String::new()
     };
+    // Flou du décor exprimé pour une sortie 720p, mis à l'échelle de la sortie réelle.
+    let bgblur = if c.bg_blur >= 0.5 { format!(",gblur=sigma={:.2}", c.bg_blur * h as f64 / 720.0) } else { String::new() };
     let temp = if c.temperature.abs() > 1e-3 {
         let t = temperature_offset(c.temperature);
         format!(",lutrgb=r='clip(val+{t:.2}\\,0\\,255)':b='clip(val-{t:.2}\\,0\\,255)'")
@@ -214,7 +216,7 @@ pub fn filter_graph(job: &ExportJob) -> String {
 eq=brightness={b:.3}:contrast={ct:.3}:saturation={sa:.3},format=rgba{temp}[src];\
 [1:v]scale={w}:{h}:flags=bilinear,format=gray{blur}{edge}[m];\
 [src][m]alphamerge,scale={sw}:{sh}:flags=bicubic[fg];\
-[2:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=rgba[bg];\
+[2:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1{bgblur},format=rgba[bg];\
 [bg][fg]overlay=x={x}:y={y}:shortest=1:format=auto,format=yuv420p[out]",
         b = c.brightness, ct = c.contrast, sa = c.saturation,
     )

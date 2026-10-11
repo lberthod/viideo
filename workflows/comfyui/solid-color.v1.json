@@ -1,0 +1,18 @@
+{
+  "id": "solid-color",
+  "version": 1,
+  "title": "Test de connexion (aplat de couleur)",
+  "description": "Workflow sans modèle : vérifie que l'adaptateur sait soumettre, suivre et récupérer une image.",
+  "tested": true,
+  "requires": { "models": {} },
+  "params": {
+    "width": [["1", "width"]],
+    "height": [["1", "height"]],
+    "seed": [["1", "color"]]
+  },
+  "output_node": "2",
+  "graph": {
+    "1": { "class_type": "EmptyImage", "inputs": { "width": 512, "height": 512, "batch_size": 1, "color": 0 } },
+    "2": { "class_type": "SaveImage", "inputs": { "images": ["1", 0], "filename_prefix": "videeo/test" } }
+  }
+}
