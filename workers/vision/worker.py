@@ -375,7 +375,7 @@ class VisionWorker:
                             info = [0, 0, 0]
                             if cleanup:
                                 mask, *info = maskqa.clean_mask(
-                                    mask, float(cleanup.get("min_island_ratio", 0.05)), float(cleanup.get("max_hole_ratio", 0.002)))
+                                    mask, float(cleanup.get("min_island_ratio", 0.05)), float(cleanup.get("max_hole_ratio", 0.0002)))
                             self._write_mask(out_dir / f"{g:05d}.png", mask)
                             ledger["cleanup"][str(g)] = info
                             written.add(g)

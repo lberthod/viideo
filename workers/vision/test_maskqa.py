@@ -20,9 +20,20 @@ def test_clean_removes_islands_and_fills_holes():
 
 def test_clean_keeps_big_hole_and_border_background():
     m = disk(100, 100, 50, 50, 40)
-    m[30:70, 30:70] = False       # grand trou (1600 px > 0,2 %) : un vrai vide, on le garde
-    c, _, filled, _ = clean_mask(m)
+    m[30:70, 30:70] = False       # grand trou (1600 px) : un vrai vide, on le garde
+    c, _, filled, _ = clean_mask(m, max_hole_ratio=0.002)
     assert filled == 0 and not c[50, 50]
+
+
+def test_clean_keeps_scenery_pocket_closed_by_subject():
+    # Cas du randonneur (720p) : poche de décor de ~1 000 px fermée par la bretelle, le bras et la
+    # jambe. La boucher y collerait le paysage source ; un défaut de 60 px est, lui, bouché.
+    m = np.zeros((720, 1280), bool)
+    m[200:700, 600:760] = True
+    m[400:430, 640:675] = False   # poche : 1 050 px
+    m[300:306, 700:710] = False   # défaut : 60 px
+    c, _, filled, _ = clean_mask(m)
+    assert filled == 1 and not c[415, 650] and c[303, 705]
 
 
 def test_drift_flags_empty_and_jump_but_not_smooth_motion():

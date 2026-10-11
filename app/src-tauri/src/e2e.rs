@@ -52,7 +52,7 @@ fn full_pipeline() {
     let mask_key = p.mask_key().unwrap();
     let mask_rel = format!("cache/masks/{}", &mask_key[..16]);
     let res = w.request("propagate", json!({"frames_dir": frames_dir, "out_dir": p.resolve(&mask_rel).unwrap(), "prompts": prompts, "chunk_size": 32,
-                                           "cleanup": {"min_island_ratio": 0.05, "max_hole_ratio": 0.002}})).unwrap();
+                                           "cleanup": {"min_island_ratio": 0.05, "max_hole_ratio": 0.0002}})).unwrap();
     assert!(p.resolve(&mask_rel).unwrap().join("quality.json").exists(), "quality.json écrit");
     println!("propagation {res}");
     assert_eq!(res["written"].as_u64().unwrap() as u32, r.frames);

@@ -10,12 +10,17 @@ import cv2
 import numpy as np
 
 
-def clean_mask(mask: np.ndarray, min_island_ratio: float = 0.05, max_hole_ratio: float = 0.002):
+def clean_mask(mask: np.ndarray, min_island_ratio: float = 0.05, max_hole_ratio: float = 0.0002):
     """Renvoie (masque nettoyé, nb d'îlots retirés, nb de trous bouchés, aire des îlots retirés en px).
 
     - îlot : composante connexe plus petite que `min_island_ratio` × la plus grande composante ;
     - trou : composante de fond qui ne touche pas le bord de l'image et dont l'aire est inférieure
       à `max_hole_ratio` × l'aire de l'image.
+
+    Le seuil des trous est volontairement très bas (0,02 % : ~180 px en 720p). Une « poche » de
+    décor fermée par le sujet (entre une bretelle de sac, un bras et une jambe) est un vrai vide : la
+    boucher y collerait le paysage de la vidéo source. Mesuré sur le randonneur : poches de 800 à
+    2 700 px, défauts réels de SAM de quelques dizaines de px (médiane 71).
     """
     m = mask.astype(np.uint8)
     removed = filled = removed_area = 0

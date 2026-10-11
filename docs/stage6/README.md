@@ -87,6 +87,12 @@ Vidéo de démonstration : [`showcase/videeo_avant_apres_v2.mp4`](../../showcase
 
 Coût : la génération et le détourage d'un élément prennent ~15–20 s (FLUX.2 puis SAM 2) ; l'ombre de contact ~2 s pour 120 images.
 
+## Bug corrigé : poche de paysage entre le bras et le sac
+
+![Avant / après : la poche entre la bretelle, le bras et la jambe montrait le feuillage de la vidéo source](pocket-fix.jpg)
+
+Quand le randonneur tient son sac à la main, la bretelle, le bras et la jambe referment une poche de décor. SAM la détourait correctement comme un vide, mais le nettoyage du masque bouchait tous les trous fermés jusqu'à 0,2 % de l'image (~1 840 px en 720p) : la poche était remplie avec l'image source (feuillage vert). Mesuré sur les masques bruts : poches de 800 à 2 700 px, vrais défauts de SAM de quelques dizaines de px (médiane 71). Le seuil passe à 0,02 % (~180 px) ; les masques nettoyés avec l'ancienne règle sont marqués à recalculer (clé `cleanup-v2`). Test : `test_clean_keeps_scenery_pocket_closed_by_subject`.
+
 ## Ce qui reste perfectible
 
 - **Lumière du sujet** : le relighting directionnel donne le bon côté et la bonne couleur, mais sa forme vient du masque : il ne connaît ni le relief du visage (nez, orbites) ni les plis des vêtements, et il n'efface pas les ombres de la prise de vue d'origine. Un contre-jour marqué (soleil derrière le sujet) n'est pas reproduit.

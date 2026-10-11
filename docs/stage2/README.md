@@ -20,7 +20,7 @@
   - Fidélité : IoU moyen **0,995** entre blocs de 25–40 images et passe unique, vers l'avant comme vers l'arrière.
 - **Reprise après interruption.** `chunks.json` mémorise les blocs terminés pour ces invites. Après une annulation, relancer reprend au premier bloc non terminé, avec un résultat **identique** au calcul ininterrompu (IoU 1,0). Dans le test, 56 images sur 120 ont été recalculées.
 - **Aperçu sur une seule image.** L'aperçu ne charge plus que l'image concernée, au lieu de tout l'extrait.
-- **Nettoyage du masque** (option, activée par défaut) : îlots < 5 % de la plus grande composante et trous intérieurs < 0,2 % de l'image. ~4 ms par image.
+- **Nettoyage du masque** (option, activée par défaut) : îlots < 5 % de la plus grande composante et trous intérieurs < 0,02 % de l'image (abaissé de 0,2 % : une poche de décor fermée par le sujet, entre une bretelle et un bras par exemple, doit rester vide). ~4 ms par image.
 - **Détection de dérive** (`workers/vision/maskqa.py`), écrite dans `quality.json` à côté des masques :
 
 | Critère | Règle | Pourquoi |

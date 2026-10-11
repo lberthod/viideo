@@ -430,7 +430,9 @@ impl Project {
         let m = &self.manifest;
         let proxy = m.proxy.as_ref().map(|p| p.key.clone()).unwrap_or_default();
         let prompts = serde_json::to_string(&m.segmentation.prompts)?;
-        let cleanup: &[u8] = if m.segmentation.cleanup { b"cleanup-v1" } else { b"raw" };
+        // cleanup-v2 : seuil des trous abaissé (les poches de décor fermées par le sujet restent
+        // vides) ; les masques nettoyés avec l'ancienne règle sont à recalculer.
+        let cleanup: &[u8] = if m.segmentation.cleanup { b"cleanup-v2" } else { b"raw" };
         Ok(sha256_hex(&[b"mask-v2", proxy.as_bytes(), m.segmentation.model.as_bytes(), m.segmentation.dtype.as_bytes(), prompts.as_bytes(), cleanup]))
     }
 

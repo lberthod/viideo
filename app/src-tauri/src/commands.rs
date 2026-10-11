@@ -373,7 +373,7 @@ pub async fn propagate_mask(app: AppHandle, state: State<'_, AppState>) -> Resul
         }
         let key = p.mask_key()?;
         let rel = format!("cache/masks/{}", &key[..16]);
-        let cleanup = p.manifest.segmentation.cleanup.then(|| json!({"min_island_ratio": 0.05, "max_hole_ratio": 0.002}));
+        let cleanup = p.manifest.segmentation.cleanup.then(|| json!({"min_island_ratio": 0.05, "max_hole_ratio": 0.0002}));
         let px = p.manifest.proxy.as_ref().ok_or_else(|| AppError::Msg("Proxy manquant.".into()))?;
         Ok((key, rel.clone(), p.resolve(&rel)?, p.manifest.segmentation.prompts.clone(), cleanup, p.resolve(&px.dir)?))
     })?;
